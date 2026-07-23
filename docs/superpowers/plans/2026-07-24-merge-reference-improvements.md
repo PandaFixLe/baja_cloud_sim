@@ -1142,11 +1142,15 @@ Replace:
 With:
 ```python
         # --- Stanley + PD control (real elapsed dt) ---
+        # First cycle has no derivative history, so skip the D term to
+        # avoid a 1000x / dt spike on the first reading.
         if self.prev_time is None:
             self.prev_time = now
-        dt = max(1e-3, (now - self.prev_time).nanoseconds / 1e9)
-        self.prev_time = now
-        error_rate = (error - self.prev_error) / dt
+            error_rate = 0.0
+        else:
+            dt = max(1e-3, (now - self.prev_time).nanoseconds / 1e9)
+            self.prev_time = now
+            error_rate = (error - self.prev_error) / dt
         self.prev_error = error
 ```
 
