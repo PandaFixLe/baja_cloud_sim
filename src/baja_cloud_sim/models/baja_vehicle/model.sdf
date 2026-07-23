@@ -1,0 +1,442 @@
+<?xml version="1.0" encoding="utf-8"?>
+<sdf version="1.9">
+  <model name="baja_vehicle">
+    <self_collide>false</self_collide>
+    <allow_auto_disable>false</allow_auto_disable>
+    <!-- 底盘调参：基座链接惯性属性
+         - <mass>：整车质量（影响加速、碰撞反应）。
+         - <ixx>、<iyy>、<izz>：转动惯量调节（影响偏航/横滚响应）。
+         - <pose>：质心偏移（影响动力学表现）。
+         根据真实车辆或目标仿真响应调整这些参数。
+    -->
+    <link name="base_link">
+      <pose>0 0 0 0 0 0</pose>
+      <inertial>
+        <mass>252.0</mass>
+        <pose>-0.08 0 0 0 0 0</pose>
+        <inertia>
+          <ixx>53.80</ixx>
+          <iyy>153.10</iyy>
+          <izz>179.55</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="chassis_collision">
+        <geometry>
+          <box>
+            <size>2.80 1.34 0.34</size>
+          </box>
+        </geometry>
+        <surface>
+          <contact>
+            <ode>
+              <kp>800000</kp>
+              <kd>200</kd>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name="chassis_visual">
+        <geometry>
+          <box>
+            <size>2.80 1.34 0.34</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.02 0.20 0.28 1</ambient>
+          <diffuse>0.04 0.48 0.62 1</diffuse>
+          <pbr><metal><roughness>0.42</roughness><metalness>0.18</metalness></metal></pbr>
+        </material>
+      </visual>
+      <visual name="nose_visual">
+        <pose>1.22 0 0.15 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.36 1.18 0.22</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.95 0.42 0.06 1</ambient>
+          <diffuse>1.0 0.58 0.08 1</diffuse>
+        </material>
+      </visual>
+    </link>
+    <link name="rear_left_wheel">
+      <pose>-0.715 0.745 -0.178 0 0 0</pose>
+      <inertial>
+        <mass>8.0</mass>
+        <inertia>
+          <ixx>0.183</ixx>
+          <iyy>0.341</iyy>
+          <izz>0.183</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="tire">
+        <pose>0 0 0 1.570796 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.292</radius>
+            <length>0.18</length>
+          </cylinder>
+        </geometry>
+           <!-- 轮胎 / 接触调参：
+             - <mu>, <mu2>：摩擦系数（横向/纵向），加大可提升抓地力。
+             - <slip1>, <slip2>：滑移行为，调节轮胎打滑开始时机。
+             - 在 <contact>/<ode> 下：<kp>, <kd>, <max_vel>, <min_depth> 控制接触刚度/阻尼和穿透处理。
+             这些参数强烈影响驾驶手感与稳定性（类似悬架响应）。
+           -->
+        <surface>
+          <friction>
+            <ode>
+              <mu>1.05</mu>
+              <mu2>0.78</mu2>
+              <fdir1>1 0 0</fdir1>
+              <slip1>0.012</slip1>
+              <slip2>0.030</slip2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>700000</kp>
+              <kd>160</kd>
+              <max_vel>0.1</max_vel>
+              <min_depth>0.001</min_depth>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name="tire_visual">
+        <pose>0 0 0 1.570796 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.292</radius>
+            <length>0.18</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.025 0.025 0.025 1</ambient>
+          <diffuse>0.045 0.045 0.045 1</diffuse>
+          <pbr><metal><roughness>0.95</roughness><metalness>0.0</metalness></metal></pbr>
+        </material>
+      </visual>
+    </link>
+    <link name="rear_right_wheel">
+      <pose>-0.715 -0.745 -0.178 0 0 0</pose>
+      <inertial>
+        <mass>8.0</mass>
+        <inertia>
+          <ixx>0.183</ixx>
+          <iyy>0.341</iyy>
+          <izz>0.183</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="tire">
+        <pose>0 0 0 1.570796 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.292</radius>
+            <length>0.18</length>
+          </cylinder>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>1.05</mu>
+              <mu2>0.78</mu2>
+              <fdir1>1 0 0</fdir1>
+              <slip1>0.012</slip1>
+              <slip2>0.030</slip2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>700000</kp>
+              <kd>160</kd>
+              <max_vel>0.1</max_vel>
+              <min_depth>0.001</min_depth>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name="tire_visual">
+        <pose>0 0 0 1.570796 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.292</radius>
+            <length>0.18</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.025 0.025 0.025 1</ambient>
+          <diffuse>0.045 0.045 0.045 1</diffuse>
+          <pbr><metal><roughness>0.95</roughness><metalness>0.0</metalness></metal></pbr>
+        </material>
+      </visual>
+    </link>
+    <link name="front_left_steering">
+      <pose>0.715 0.655 -0.178 0 0 0</pose>
+      <inertial>
+        <mass>2.0</mass>
+        <inertia>
+          <ixx>0.01</ixx>
+          <iyy>0.01</iyy>
+          <izz>0.01</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+    </link>
+    <link name="front_right_steering">
+      <pose>0.715 -0.655 -0.178 0 0 0</pose>
+      <inertial>
+        <mass>2.0</mass>
+        <inertia>
+          <ixx>0.01</ixx>
+          <iyy>0.01</iyy>
+          <izz>0.01</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+    </link>
+    <link name="front_left_wheel">
+      <pose>0.715 0.745 -0.178 0 0 0</pose>
+      <inertial>
+        <mass>8.0</mass>
+        <inertia>
+          <ixx>0.183</ixx>
+          <iyy>0.341</iyy>
+          <izz>0.183</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="tire">
+        <pose>0 0 0 1.570796 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.292</radius>
+            <length>0.18</length>
+          </cylinder>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>1.02</mu>
+              <mu2>0.76</mu2>
+              <fdir1>1 0 0</fdir1>
+              <slip1>0.014</slip1>
+              <slip2>0.032</slip2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>700000</kp>
+              <kd>160</kd>
+              <max_vel>0.1</max_vel>
+              <min_depth>0.001</min_depth>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name="tire_visual">
+        <pose>0 0 0 1.570796 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.292</radius>
+            <length>0.18</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.025 0.025 0.025 1</ambient>
+          <diffuse>0.045 0.045 0.045 1</diffuse>
+          <pbr><metal><roughness>0.95</roughness><metalness>0.0</metalness></metal></pbr>
+        </material>
+      </visual>
+    </link>
+    <link name="front_right_wheel">
+      <pose>0.715 -0.745 -0.178 0 0 0</pose>
+      <inertial>
+        <mass>8.0</mass>
+        <inertia>
+          <ixx>0.183</ixx>
+          <iyy>0.341</iyy>
+          <izz>0.183</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="tire">
+        <pose>0 0 0 1.570796 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.292</radius>
+            <length>0.18</length>
+          </cylinder>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>1.02</mu>
+              <mu2>0.76</mu2>
+              <fdir1>1 0 0</fdir1>
+              <slip1>0.014</slip1>
+              <slip2>0.032</slip2>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>700000</kp>
+              <kd>160</kd>
+              <max_vel>0.1</max_vel>
+              <min_depth>0.001</min_depth>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+      <visual name="tire_visual">
+        <pose>0 0 0 1.570796 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.292</radius>
+            <length>0.18</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.025 0.025 0.025 1</ambient>
+          <diffuse>0.045 0.045 0.045 1</diffuse>
+          <pbr><metal><roughness>0.95</roughness><metalness>0.0</metalness></metal></pbr>
+        </material>
+      </visual>
+    </link>
+    <joint name="rear_left_wheel_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rear_left_wheel</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <dynamics>
+          <damping>0.12</damping>
+          <friction>0.04</friction>
+        </dynamics>
+      </axis>
+    </joint>
+    <joint name="rear_right_wheel_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>rear_right_wheel</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <dynamics>
+          <damping>0.12</damping>
+          <friction>0.04</friction>
+        </dynamics>
+      </axis>
+    </joint>
+        <!-- 转向关节调参：
+          - <lower>/<upper>：转向角限位（弧度，物理范围）。
+          - <effort>：关节驱动扭矩/力矩上限。
+          - <velocity>：关节最大角速度。
+          - <damping> 和 <friction>：关节动力学，影响回正与顺应性。
+          调整这些参数可控制转向响应与稳定性。
+        -->
+    <joint name="front_left_steering_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>front_left_steering</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-0.70</lower>
+          <upper>0.70</upper>
+          <effort>180</effort>
+          <velocity>2.5</velocity>
+        </limit>
+        <dynamics>
+          <damping>7.0</damping>
+          <friction>0.6</friction>
+        </dynamics>
+      </axis>
+    </joint>
+    <joint name="front_right_steering_joint" type="revolute">
+      <parent>base_link</parent>
+      <child>front_right_steering</child>
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <lower>-0.70</lower>
+          <upper>0.70</upper>
+          <effort>180</effort>
+          <velocity>2.5</velocity>
+        </limit>
+        <dynamics>
+          <damping>7.0</damping>
+          <friction>0.6</friction>
+        </dynamics>
+      </axis>
+    </joint>
+    <joint name="front_left_wheel_joint" type="revolute">
+      <parent>front_left_steering</parent>
+      <child>front_left_wheel</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <dynamics>
+          <damping>0.08</damping>
+          <friction>0.03</friction>
+        </dynamics>
+      </axis>
+    </joint>
+    <joint name="front_right_wheel_joint" type="revolute">
+      <parent>front_right_steering</parent>
+      <child>front_right_wheel</child>
+      <axis>
+        <xyz>0 1 0</xyz>
+        <dynamics>
+          <damping>0.08</damping>
+          <friction>0.03</friction>
+        </dynamics>
+      </axis>
+    </joint>
+        <!-- Ackermann 插件调参：
+          - <wheel_separation>, <wheel_base>, <wheel_radius>：运动学几何参数。
+          - <steering_limit>：最大转向角（弧度），应与控制器限幅对应。
+          - <min/max> velocity, acceleration, jerk：模拟执行机构运动约束。
+          - 如果修改控制器限幅，也需同步更新 `params.yaml` 和 `actuator_adapter_node` 中轴距相关转换。
+        -->
+    <plugin filename="gz-sim-ackermann-steering-system" name="gz::sim::systems::AckermannSteering">
+      <left_joint>rear_left_wheel_joint</left_joint>
+      <right_joint>rear_right_wheel_joint</right_joint>
+      <left_steering_joint>front_left_steering_joint</left_steering_joint>
+      <right_steering_joint>front_right_steering_joint</right_steering_joint>
+      <wheel_separation>1.49</wheel_separation>
+      <kingpin_width>1.31</kingpin_width>
+      <wheel_base>1.43</wheel_base>
+      <wheel_radius>0.292</wheel_radius>
+      <steering_limit>0.610865</steering_limit>
+      <min_velocity>-1.0</min_velocity>
+      <max_velocity>5.0</max_velocity>
+      <min_acceleration>-4.0</min_acceleration>
+      <max_acceleration>2.4</max_acceleration>
+      <min_jerk>-8.0</min_jerk>
+      <max_jerk>6.0</max_jerk>
+      <topic>/model/baja_vehicle/cmd_vel</topic>
+      <odom_topic>/model/baja_vehicle/odometry</odom_topic>
+      <tf_topic>/model/baja_vehicle/tf</tf_topic>
+      <frame_id>map</frame_id>
+      <child_frame_id>base_link</child_frame_id>
+      <odom_publish_frequency>50</odom_publish_frequency>
+    </plugin>
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+      <topic>/model/baja_vehicle/joint_state</topic>
+    </plugin>
+  </model>
+</sdf>

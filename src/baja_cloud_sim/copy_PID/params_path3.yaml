@@ -1,0 +1,75 @@
+# CAN 桥接节点
+can_bridge_node:
+  ros__parameters:
+    # DBC 文件名（相对于包根目录）
+    vcu_dbc_file: "autonomous.dbc"
+    gps_dbc_file: "gps.dbc"
+    # CAN 总线配置
+    can_channel: "vcan0"
+    can_bustype: "socketcan"
+    control_period_ms: 50
+    enable_differential: true
+    target_mode: 1               # 1 线控模式，0 手动模式
+    cmd_topic: "/cmd_control"
+    enable_4ws: true             # 四轮转向总开关
+    curvature_threshold: 0.3
+    default_drive_mode: 0        # 0 前驱，1 后驱，2 四驱
+
+
+# 避障节点
+obstacle_avoider:
+  ros__parameters:
+    avoid_distance: 4.0      # 触发避障距离（米）
+    stop_distance: 1.0       # 紧急停车距离（米）
+    safe_offset: 1.5         # 横向安全偏移（米）
+    forward_distance: 2.0    # 虚拟目标点前冲距离（米）
+    debug: true              # 是否打印调试信息
+
+
+# 循迹节点
+path_follower_node:
+  ros__parameters:
+    # 轨迹文件（相对于包根目录）
+    path_file: "path/recorded_path3.csv"
+    # 控制参数
+    target_speed: 8.0
+    lookahead_distance: 3.0
+    kp_heading: 1.2
+    kd_heading: 0.3            # D增益（阻尼振荡）
+    steering_alpha: 0.6         # 低通滤波系数(0-1, 越小越平滑)
+    max_steer_rate_deg: 15.0    # 最大转向角速率(度/周期)
+    auto_find_nearest: true
+    max_start_distance: 5.0
+    stop_distance: 1.0
+    max_steering_angle: 40.0     # 最大前轮转角（度）
+    adaptive_steering: true
+    adaptive_speed: true
+    cmd_topic: "/cmd_control"
+    # 四轮转向参数
+    four_wheel_steering_enabled: true
+    rear_steering_ratio: 0.7
+    rear_steering_max_deg: 12.0
+    min_speed_for_4ws: 1.0
+    min_steering_for_4ws: 8.0
+
+# 可视化节点
+trajectory_visualizer:
+  ros__parameters:
+    recorded_path_file: "path/recorded_path3.csv"
+    frame_id: "map"
+    show_arrows: true
+    arrow_scale: 0.8
+    update_rate: 20.0
+    yaw_offset: 0.0           # 航向补偿（弧度），若需要可改为 3.14159 等
+
+# 车辆仿真节点（替代 CAN 桥接，仅仿真时使用）
+vehicle_simulator:
+  ros__parameters:
+    path_file: "path/recorded_path3.csv"
+    wheelbase: 2.0            # 轴距(m)，与实车一致
+    sim_rate: 50.0            # 仿真频率(Hz)
+    max_accel: 2.0            # 最大加速度(m/s²)，模拟动力响应延迟
+    max_steer_rate: 30.0      # 最大转向角速度(°/s)
+    gps_noise: 0.0            # GPS噪声标准差(m)，设0.05可模拟真实GPS抖动
+    yaw_noise: 0.0            # 航向噪声标准差(rad)
+    cmd_topic: "/cmd_control"
