@@ -10,7 +10,7 @@ import math
 import random
 import time
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 
 Point = Tuple[float, float]
@@ -116,18 +116,48 @@ def segment_is_safe(
     vehicle_half_width: float,
     samples: int = 4,
 ) -> bool:
+    """Check that the swept vehicle rectangle along a path segment stays clear.
+
+    Earlier versions treated the vehicle as a single point and inflated the
+    obstacle by half the vehicle footprint. That simplification is exact when
+    the segment is parallel to the obstacle yaw, but underestimates clearance
+    when the segment cuts across the obstacle (e.g. swinging back behind a
+    cone after passing it). The rear-corner of the vehicle can then graze
+    the obstacle even though the point-clearance test passes.
+
+    Here the vehicle is treated as an oriented rectangle. We rotate it to
+    align with the segment direction, and at every sample point test all
+    four corners against the un-inflated obstacles. ``vehicle_half_length``
+    and ``vehicle_half_width`` already include the safety margin, so the
+    swept rectangle is the safety-padded vehicle box.
+    """
+    seg_dx = end[0] - start[0]
+    seg_dy = end[1] - start[1]
+    if seg_dx == 0.0 and seg_dy == 0.0:
+        return True  # degenerate segment — no motion → trivially safe
+    seg_yaw = math.atan2(seg_dy, seg_dx)
+    c = math.cos(seg_yaw)
+    s = math.sin(seg_yaw)
+    # Vehicle-local axes (forward = (c, s), left = (-s, c)).
+    # Four corners in the world frame, relative to the sample point.
+    half_l = vehicle_half_length
+    half_w = vehicle_half_width
+    corners_local = (
+        ( c * half_l - s * half_w,  s * half_l + c * half_w),  # front-left
+        ( c * half_l + s * half_w,  s * half_l - c * half_w),  # front-right
+        (-c * half_l - s * half_w, -s * half_l + c * half_w),  # rear-left
+        (-c * half_l + s * half_w, -s * half_l - c * half_w),  # rear-right
+    )
+
     for step in range(samples + 1):
         ratio = step / max(samples, 1)
-        point = (
-            start[0] + (end[0] - start[0]) * ratio,
-            start[1] + (end[1] - start[1]) * ratio,
-        )
-        for obstacle in obstacles:
-            clearance = point_to_oriented_box_clearance(
-                point, obstacle, vehicle_half_length, vehicle_half_width
-            )
-            if clearance <= 0.0:
-                return False
+        px = start[0] + seg_dx * ratio
+        py = start[1] + seg_dy * ratio
+        for ox, oy in corners_local:
+            corner = (px + ox, py + oy)
+            for obstacle in obstacles:
+                if point_to_oriented_box_clearance(corner, obstacle, 0.0, 0.0) <= 0.0:
+                    return False
     return True
 
 
