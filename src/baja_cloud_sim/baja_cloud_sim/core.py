@@ -10,7 +10,7 @@ import math
 import random
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 Point = Tuple[float, float]
@@ -36,8 +36,38 @@ def quaternion_to_yaw(x: float, y: float, z: float, w: float) -> float:
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
+def quaternion_to_rpy(
+    x: float,
+    y: float,
+    z: float,
+    w: float,
+) -> Tuple[float, float, float]:
+    sin_roll = 2.0 * (w * x + y * z)
+    cos_roll = 1.0 - 2.0 * (x * x + y * y)
+    roll = math.atan2(sin_roll, cos_roll)
+    sin_pitch = 2.0 * (w * y - z * x)
+    pitch = math.copysign(math.pi * 0.5, sin_pitch) if abs(sin_pitch) >= 1.0 else math.asin(sin_pitch)
+    return roll, pitch, quaternion_to_yaw(x, y, z, w)
+
+
 def yaw_to_quaternion(yaw: float) -> Tuple[float, float, float, float]:
     return 0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5)
+
+
+def rpy_to_quaternion(
+    roll: float,
+    pitch: float,
+    yaw: float,
+) -> Tuple[float, float, float, float]:
+    cr, sr = math.cos(roll * 0.5), math.sin(roll * 0.5)
+    cp, sp = math.cos(pitch * 0.5), math.sin(pitch * 0.5)
+    cy, sy = math.cos(yaw * 0.5), math.sin(yaw * 0.5)
+    return (
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+        cr * cp * cy + sr * sp * sy,
+    )
 
 
 def world_to_base(point: Point, vehicle: Point, vehicle_yaw: float) -> Point:
@@ -118,37 +148,26 @@ def segment_is_safe(
 ) -> bool:
     """Check that the swept vehicle rectangle along a path segment stays clear.
 
-    Earlier versions treated the vehicle as a single point and inflated the
-    obstacle by half the vehicle footprint. That simplification is exact when
-    the segment is parallel to the obstacle yaw, but underestimates clearance
-    when the segment cuts across the obstacle (e.g. swinging back behind a
-    cone after passing it). The rear-corner of the vehicle can then graze
-    the obstacle even though the point-clearance test passes.
-
-    Here the vehicle is treated as an oriented rectangle. We rotate it to
-    align with the segment direction, and at every sample point test all
-    four corners against the un-inflated obstacles. ``vehicle_half_length``
-    and ``vehicle_half_width`` already include the safety margin, so the
-    swept rectangle is the safety-padded vehicle box.
+    Treats the vehicle as an oriented rectangle rotated to the segment direction,
+    testing all four corners at every sample point against the un-inflated
+    obstacles. ``vehicle_half_length`` and ``vehicle_half_width`` already
+    include the safety margin.
     """
     seg_dx = end[0] - start[0]
     seg_dy = end[1] - start[1]
     if seg_dx == 0.0 and seg_dy == 0.0:
-        return True  # degenerate segment — no motion → trivially safe
+        return True
     seg_yaw = math.atan2(seg_dy, seg_dx)
     c = math.cos(seg_yaw)
     s = math.sin(seg_yaw)
-    # Vehicle-local axes (forward = (c, s), left = (-s, c)).
-    # Four corners in the world frame, relative to the sample point.
     half_l = vehicle_half_length
     half_w = vehicle_half_width
     corners_local = (
-        ( c * half_l - s * half_w,  s * half_l + c * half_w),  # front-left
-        ( c * half_l + s * half_w,  s * half_l - c * half_w),  # front-right
-        (-c * half_l - s * half_w, -s * half_l + c * half_w),  # rear-left
-        (-c * half_l + s * half_w, -s * half_l - c * half_w),  # rear-right
+        ( c * half_l - s * half_w,  s * half_l + c * half_w),
+        ( c * half_l + s * half_w,  s * half_l - c * half_w),
+        (-c * half_l - s * half_w, -s * half_l + c * half_w),
+        (-c * half_l + s * half_w, -s * half_l - c * half_w),
     )
-
     for step in range(samples + 1):
         ratio = step / max(samples, 1)
         px = start[0] + seg_dx * ratio
@@ -181,17 +200,78 @@ def polyline_distance(point: Point, path: Sequence[Point]) -> float:
     return best
 
 
+def _smooth_hill(s_coord: float, start: float, length: float, height: float) -> float:
+    """Smooth sin-squared hill with zero height and grade at both ends."""
+    if s_coord < start or s_coord > start + length:
+        return 0.0
+    phase = math.pi * (s_coord - start) / length
+    return height * math.sin(phase) ** 2
+
+
+def _circular_speed_bump(s_coord: float, center: float, width: float, height: float) -> float:
+    """Low circular-segment bump with the requested width and crown height."""
+    half_width = width * 0.5
+    offset = abs(s_coord - center)
+    if offset > half_width:
+        return 0.0
+    radius = (half_width * half_width + height * height) / (2.0 * height)
+    baseline = radius - height
+    return math.sqrt(max(0.0, radius * radius - offset * offset)) - baseline
+
+
+def terrain_height(s_coord: float) -> float:
+    """Road elevation profile: two sub-10-degree hills and two low bumps."""
+    return (
+        _smooth_hill(s_coord, start=16.0, length=14.0, height=0.55)
+        + _smooth_hill(s_coord, start=76.0, length=13.0, height=0.45)
+        + _circular_speed_bump(s_coord, center=39.0, width=1.20, height=0.08)
+        + _circular_speed_bump(s_coord, center=92.0, width=1.00, height=0.07)
+    )
+
+
 def generate_centerline(length: float = 100.0, spacing: float = 0.5) -> List[Dict[str, float]]:
+    """Generate a long straight, a 90-degree left turn, and a final straight.
+
+    ``s`` is true reference-path distance, so adjacent samples retain the
+    requested spacing through the circular bend.
+    """
     points: List[Dict[str, float]] = []
     count = int(round(length / spacing)) + 1
+    straight_length = min(50.0, length)
+    turn_radius = 15.0
+    turn_angle = math.pi * 0.5
+    turn_length = min(turn_radius * turn_angle, max(0.0, length - straight_length))
+    turn_end = straight_length + turn_length
     for index in range(count):
         s_coord = min(length, index * spacing)
-        x = s_coord
-        y = 2.6 * math.sin(s_coord / 19.0) + 0.7 * math.sin(s_coord / 7.5)
-        derivative = 2.6 / 19.0 * math.cos(s_coord / 19.0) + 0.7 / 7.5 * math.cos(s_coord / 7.5)
-        yaw = math.atan2(derivative, 1.0)
-        half_width = 3.5 - 0.2 * math.exp(-((s_coord - 64.0) / 12.0) ** 2)
-        points.append({"s": s_coord, "x": x, "y": y, "yaw": yaw, "half_width": half_width})
+        if s_coord <= straight_length:
+            x = s_coord
+            y = 0.0
+            yaw = 0.0
+        elif s_coord <= turn_end:
+            angle = (s_coord - straight_length) / turn_radius
+            x = straight_length + turn_radius * math.sin(angle)
+            y = turn_radius * (1.0 - math.cos(angle))
+            yaw = angle
+        else:
+            final_angle = turn_length / turn_radius
+            turn_x = straight_length + turn_radius * math.sin(final_angle)
+            turn_y = turn_radius * (1.0 - math.cos(final_angle))
+            distance_after_turn = s_coord - turn_end
+            x = turn_x + distance_after_turn * math.cos(final_angle)
+            y = turn_y + distance_after_turn * math.sin(final_angle)
+            yaw = final_angle
+        half_width = 4.0 - 0.25 * math.exp(-((s_coord - 66.0) / 9.0) ** 2)
+        points.append(
+            {
+                "s": s_coord,
+                "x": x,
+                "y": y,
+                "z": terrain_height(s_coord),
+                "yaw": yaw,
+                "half_width": half_width,
+            }
+        )
     return points
 
 
@@ -218,7 +298,6 @@ def generate_obstacles(
             chosen.append(index)
     chosen.sort()
     obstacles: List[Dict[str, float]] = []
-    next_id = 0
     for obstacle_id, index in enumerate(chosen):
         reference = centerline[index]
         max_offset = max(0.8, reference["half_width"] - 1.5)
@@ -226,44 +305,21 @@ def generate_obstacles(
         if obstacle_id == 0:
             lateral *= 0.25
         x, y = frenet_to_world(reference, lateral)
-        yaw = reference["yaw"] + rng.uniform(-0.35, 0.35)
-        length = rng.uniform(1.3, 2.1)
-        width = rng.uniform(1.0, 1.7)
         height = rng.uniform(0.65, 1.0)
         obstacles.append(
             {
-                "id": next_id,
+                "id": obstacle_id,
                 "x": x,
                 "y": y,
-                "z": 0.45,
-                "yaw": yaw,
-                "length": length,
-                "width": width,
+                "z": reference.get("z", 0.0) + height * 0.5 + 0.03,
+                "yaw": reference["yaw"] + rng.uniform(-0.35, 0.35),
+                "length": rng.uniform(1.3, 2.1),
+                "width": rng.uniform(1.0, 1.7),
                 "height": height,
                 "s": reference["s"],
                 "lateral": lateral,
             }
         )
-        next_id += 1
-        # Add a paired obstacle 2m parallel to the first obstacle for avoidance precision testing
-        if obstacle_id == 0:
-            pair_lateral = lateral - 5.0
-            pair_x, pair_y = frenet_to_world(reference, pair_lateral)
-            obstacles.append(
-                {
-                    "id": next_id,
-                    "x": pair_x,
-                    "y": pair_y,
-                    "z": 0.45,
-                    "yaw": yaw,
-                    "length": length,
-                    "width": width,
-                    "height": height,
-                    "s": reference["s"],
-                    "lateral": pair_lateral,
-                }
-            )
-            next_id += 1
     return obstacles
 
 
@@ -426,7 +482,7 @@ def plan_frenet_path(
 
 @dataclass
 class ControllerConfig:
-    target_speed: float = 6
+    target_speed: float = 2.5
     lookahead_distance: float = 3.0
     heading_gain: float = 1.2
     max_steering_deg: float = 35.0
