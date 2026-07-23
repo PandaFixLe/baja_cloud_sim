@@ -1,0 +1,58 @@
+truth_perception_node:
+  ros__parameters:
+    use_sim_time: true
+    perception_forward: 34.0
+    perception_backward: 6.0
+
+frenet_planner_node:
+  ros__parameters:
+    use_sim_time: true
+    origin_latitude: 30.0
+    origin_longitude: 114.0
+    horizon_m: 30.0
+    center_weight: 1.0
+    clearance_weight: 16.0
+    desired_clearance: 1.5
+    vehicle_length: 1.70
+    vehicle_width: 1.50
+    safety_margin: 0.25
+    lateral_spacing_m: 0.20
+    max_lateral_step: 1.2
+
+path_follower_node:
+  ros__parameters:
+    use_sim_time: true
+    origin_latitude: 30.0
+    origin_longitude: 114.0
+    target_speed: 2.5
+    lookahead_distance: 3.0
+    kp_heading: 1.2
+    max_steering_angle: 35.0
+
+pid_path_follower_node:
+  ros__parameters:
+    use_sim_time: true
+    origin_latitude: 30.0
+    origin_longitude: 114.0
+    target_speed: 6.0
+    lookahead_distance: 3.0
+    kp_heading: 1.2
+    kd_heading: 0.3
+    steering_alpha: 0.75
+    max_steer_rate_deg: 30.0
+    max_steering_angle: 35.0
+    adaptive_steering: true
+    adaptive_speed: true
+    k_stanley: 0.8
+    avoidance_speed_limit: 2.0
+    virtual_target_timeout: 5.0
+
+actuator_adapter_node:
+  ros__parameters:
+    use_sim_time: true
+    wheelbase: 1.43
+    command_timeout: 0.35
+
+evaluator_node:
+  ros__parameters:
+    use_sim_time: true
