@@ -27,6 +27,22 @@ path_follower_node:
     kp_heading: 1.2
     max_steering_angle: 35.0
 
+pid_path_follower_node:
+  ros__parameters:
+    use_sim_time: true
+    origin_latitude: 30.0
+    origin_longitude: 114.0
+    target_speed: 2.5
+    lookahead_distance: 3.0
+    kp_heading: 1.2
+    kd_heading: 0.3
+    steering_alpha: 0.6
+    max_steer_rate_deg: 15.0
+    max_steering_angle: 35.0
+    adaptive_steering: true
+    adaptive_speed: true
+    virtual_target_timeout: 5.0
+
 actuator_adapter_node:
   ros__parameters:
     use_sim_time: true

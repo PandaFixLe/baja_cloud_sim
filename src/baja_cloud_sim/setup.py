@@ -35,6 +35,7 @@ setup(
             "truth_perception = baja_cloud_sim.truth_perception_node:main",
             "frenet_planner = baja_cloud_sim.frenet_planner_node:main",
             "path_follower = baja_cloud_sim.path_follower_node:main",
+            "pid_path_follower = baja_cloud_sim.pid_path_follower_node:main",
             "actuator_adapter = baja_cloud_sim.actuator_adapter_node:main",
             "evaluator = baja_cloud_sim.evaluator_node:main",
         ],
