@@ -74,7 +74,7 @@ class PathFollowerNode(Node):
         if self.position is None or not self.planner_feasible or len(self.path) < 2:
             self._publish_stop()
             return
-        if self.last_path_time is None or (self.get_clock().now() - self.last_path_time).nanoseconds > 400_000_000:
+        if self.last_path_time is None or (self.get_clock().now() - self.last_path_time).nanoseconds > 500_000_000:
             self._publish_stop()
             return
         command = legacy_path_control(self.position, self.yaw_navigation, self.path, self.config)

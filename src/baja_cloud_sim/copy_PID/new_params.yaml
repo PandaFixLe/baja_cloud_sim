@@ -1,0 +1,72 @@
+can_bridge_node:
+  ros__parameters:
+    vcu_dbc_file: "autonomous.dbc"
+    gps_dbc_file: "gps.dbc"
+    can_channel: "vcan0"
+    can_bustype: "socketcan"
+    control_period_ms: 50
+    enable_differential: true
+    target_mode: 1
+    cmd_topic: "/cmd_control"
+    enable_4ws: true
+    curvature_threshold: 0.3
+    default_drive_mode: 0
+
+obstacle_avoider:
+  ros__parameters:
+    avoid_distance: 4.0
+    stop_distance: 1.0
+    critical_distance: 0.5
+    safe_offset: 1.5
+    forward_distance: 2.0
+    debug: true
+
+path_follower_node:
+  ros__parameters:
+    path_file: "path/recorded_path3.csv"
+    target_speed: 8.0
+    lookahead_distance: 2.0
+    kp_heading: 1.0
+    kd_heading: 0.3
+    steering_alpha: 0.6
+    max_steer_rate_deg: 8.0
+    auto_find_nearest: true
+    max_start_distance: 5.0
+    stop_distance: 1.0
+    max_steering_angle: 40.0
+    adaptive_steering: true
+    adaptive_speed: true
+    cmd_topic: "/cmd_control"
+    four_wheel_steering_enabled: true
+    rear_steering_ratio: 0.7
+    rear_steering_max_deg: 12.0
+    min_speed_for_4ws: 1.0
+    min_steering_for_4ws: 8.0
+    avoidance_speed_limit: 2.0
+
+trajectory_visualizer:
+  ros__parameters:
+    recorded_path_file: "path/recorded_path3.csv"
+    frame_id: "map"
+    show_arrows: true
+    arrow_scale: 0.8
+    update_rate: 20.0
+    yaw_offset: 0.0
+
+vehicle_simulator:
+  ros__parameters:
+    path_file: "path/recorded_path3.csv"
+    wheelbase: 2.0
+    sim_rate: 50.0
+    max_accel: 2.0
+    max_steer_rate: 30.0
+    gps_noise: 0.0
+    yaw_noise: 0.0
+    cmd_topic: "/cmd_control"
+
+obstacle_simulator:
+  ros__parameters:
+    path_file: "recorded_path3.csv"
+    obstacle_indices: ""
+    obstacle_radius: 0.5
+    publish_rate: 10.0

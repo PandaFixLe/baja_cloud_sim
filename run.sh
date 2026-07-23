@@ -38,7 +38,6 @@ source "$SCRIPT_DIR/install/setup.bash"
 
 export GZ_PARTITION="baja_${USER//[^a-zA-Z0-9_]/_}_$SEED"
 export GZ_IP="127.0.0.1"
-export ROS_LOCALHOST_ONLY=1
 # Stabilise OGRE2 / Mesa software rendering in VMware (no GPU).
 export LIBGL_ALWAYS_SOFTWARE=true
 export GALLIUM_DRIVER=llvmpipe

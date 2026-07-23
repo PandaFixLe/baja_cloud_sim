@@ -229,7 +229,7 @@ class PidPathFollowerNode(Node):
             return
         if self.last_path_time is None or (
             self.get_clock().now() - self.last_path_time
-        ).nanoseconds > 400_000_000:
+        ).nanoseconds > 500_000_000:
             self._stop()
             return
 

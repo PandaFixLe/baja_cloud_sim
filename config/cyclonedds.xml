@@ -2,7 +2,10 @@
   <Domain>
     <General>
       <NetworkInterfaceAddress>127.0.0.1</NetworkInterfaceAddress>
-      <DontRoute>true</DontRoute>
+      <AllowMulticast>false</AllowMulticast>
     </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+    </Discovery>
   </Domain>
 </CycloneDDS>

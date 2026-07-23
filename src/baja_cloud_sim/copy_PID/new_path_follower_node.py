@@ -23,6 +23,7 @@ class PathFollowerNode(Node):
         self.declare_parameter('lookahead_distance', 2.0)
         self.declare_parameter('kp_heading', 1.0)
         self.declare_parameter('kd_heading', 0.3)            # D增益（阻尼振荡）
+        self.declare_parameter('k_stanley', 0.8)           # Stanley横向偏差增益
         self.declare_parameter('steering_alpha', 0.6)         # 低通滤波系数(0-1, 越小越平滑)
         self.declare_parameter('max_steer_rate_deg', 8.0)    # 最大转向角速率(度/周期, 防突变)
         self.declare_parameter('auto_find_nearest', True)
@@ -46,6 +47,7 @@ class PathFollowerNode(Node):
         self.lookahead = self.get_parameter('lookahead_distance').value
         self.kp = self.get_parameter('kp_heading').value
         self.kd = self.get_parameter('kd_heading').value
+        self.k_stanley = self.get_parameter('k_stanley').value
         self.steering_alpha = self.get_parameter('steering_alpha').value
         self.max_steer_rate = math.radians(self.get_parameter('max_steer_rate_deg').value)
         self.auto_find_nearest = self.get_parameter('auto_find_nearest').value
@@ -265,6 +267,25 @@ class PathFollowerNode(Node):
         self.nearest_found = True
         self.get_logger().info(f"✅ 找到最近点: 索引={nearest_idx}, 距离={min_dist:.2f}m")
 
+    def _compute_cross_track_error(self):
+        """计算车辆到路径的横向偏差(米)，正值=车在路径右侧"""
+        if self.idx >= len(self.path) - 1:
+            return 0.0
+        lat1, lon1 = self.path[self.idx]
+        lat2, lon2 = self.path[self.idx + 1]
+        x1 = (lon1 - self.origin_lon) * 111320 * math.cos(math.radians(lat1))
+        y1 = (lat1 - self.origin_lat) * 111320
+        x2 = (lon2 - self.origin_lon) * 111320 * math.cos(math.radians(lat2))
+        y2 = (lat2 - self.origin_lat) * 111320
+        vx, vy = self.current_x, self.current_y
+        dx, dy = x2 - x1, y2 - y1
+        l2 = dx * dx + dy * dy
+        if l2 < 1e-12:
+            return math.hypot(vx - x1, vy - y1)
+        t = max(0.0, min(1.0, ((vx - x1) * dx + (vy - y1) * dy) / l2))
+        cross = dx * (vy - y1) - dy * (vx - x1)
+        return cross / math.sqrt(l2)
+
     def _calculate_curvature(self, error):
         """计算路径曲率"""
         if self.lookahead > 0:
@@ -446,12 +467,11 @@ class PathFollowerNode(Node):
         
         # 检查是否到达终点
         dist_to_end = self._dist_to_end()
-        if dist_to_end <= self.stop_distance:
+        if dist_to_end <= self.stop_distance or self.stop_requested:
             if not self.stop_requested:
                 self._stop()
                 self.stop_requested = True
                 self.get_logger().info(f"🏁 到达终点! 距离: {dist_to_end:.2f}m")
-                # 到达终点时禁用四轮转向
                 self._set_four_wheel_steering(False)
             return
         
@@ -459,6 +479,7 @@ class PathFollowerNode(Node):
         tx = None
         ty = None
         use_virtual = False
+        recovery_speed_limit = None
         
         # 检查虚拟目标点超时
         if self.virtual_target_time is not None:
@@ -532,7 +553,7 @@ class PathFollowerNode(Node):
                 self._set_four_wheel_steering(False)
             
             # 速度自适应预瞄距离：高速看更远
-            dynamic_lookahead = max(self.lookahead, self.target_speed * 0.5)
+            dynamic_lookahead = max(self.lookahead, min(self.target_speed * 1.0, 5.0))
             
             for i in range(self.idx, len(self.path)):
                 dist_to_waypoint = self._dist(self.lat, self.lon, self.path[i][0], self.path[i][1])
@@ -574,9 +595,8 @@ class PathFollowerNode(Node):
         self.get_logger().info(f"📍 方位角: 目标={target_bearing:.1f}°, 当前={current_bearing:.1f}°, 误差={error_deg:.1f}°")
         
         if abs(error_deg) > 90:
-            self.get_logger().warn(f"⚠️ 航向偏差过大: {error_deg:.1f}°，停车等待")
-            self._stop()
-            return
+            self.get_logger().warn(f"⚠️ 急弯: {error_deg:.1f}°，降速硬转")
+            recovery_speed_limit = 0.5
         
         # 计算曲率
         curvature = self._calculate_curvature(error)
@@ -590,8 +610,12 @@ class PathFollowerNode(Node):
         error_rate = (error - self.prev_error) / dt
         self.prev_error = error
         
-        # PD控制
-        steering_raw = -(self.kp * error + self.kd * error_rate)
+        # Stanley横向纠正：arctan(k×cte/v)，高速自动温和，低速自动激进
+        ct_err = self._compute_cross_track_error()
+        min_spd = 2.0  # 防除零
+        stanley_term = math.atan2(self.k_stanley * ct_err, max(self.target_speed, min_spd))
+
+        steering_raw = -(self.kp * error + self.kd * error_rate + stanley_term)
         steering_raw = max(-dynamic_max_steering, min(dynamic_max_steering, steering_raw))
         
         # 低通滤波（平滑转向输出，出弯后渐进回归）
@@ -613,6 +637,8 @@ class PathFollowerNode(Node):
         # 计算速度因子和当前速度
         speed_factor = self._get_speed_factor(steering_deg, dist_to_end, preview_curv)
         current_speed = self.target_speed * speed_factor
+        if recovery_speed_limit is not None:
+            current_speed = min(current_speed, recovery_speed_limit)
         
         # ========== 新增：计算并发布后轮转向指令 ==========
         if self.four_wheel_steering_enabled:

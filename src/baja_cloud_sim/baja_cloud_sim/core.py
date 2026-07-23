@@ -160,7 +160,7 @@ def generate_centerline(length: float = 100.0, spacing: float = 0.5) -> List[Dic
         y = 2.6 * math.sin(s_coord / 19.0) + 0.7 * math.sin(s_coord / 7.5)
         derivative = 2.6 / 19.0 * math.cos(s_coord / 19.0) + 0.7 / 7.5 * math.cos(s_coord / 7.5)
         yaw = math.atan2(derivative, 1.0)
-        half_width = 4.0 - 0.3 * math.exp(-((s_coord - 64.0) / 10.0) ** 2)
+        half_width = 3.5 - 0.2 * math.exp(-((s_coord - 64.0) / 12.0) ** 2)
         points.append({"s": s_coord, "x": x, "y": y, "yaw": yaw, "half_width": half_width})
     return points
 
@@ -242,8 +242,8 @@ class PlannerConfig:
     horizon_m: float = 30.0
     layer_spacing_m: float = 1.0
     lateral_spacing_m: float = 0.25
-    vehicle_length: float = 3.0
-    vehicle_width: float = 1.5
+    vehicle_length: float = 1.70
+    vehicle_width: float = 1.50
     safety_margin: float = 0.25
     desired_clearance: float = 1.2
     center_weight: float = 1.0
@@ -396,7 +396,7 @@ def plan_frenet_path(
 
 @dataclass
 class ControllerConfig:
-    target_speed: float = 2.5
+    target_speed: float = 6
     lookahead_distance: float = 3.0
     heading_gain: float = 1.2
     max_steering_deg: float = 35.0

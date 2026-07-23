@@ -177,7 +177,7 @@ class FrenetPlannerNode(Node):
             marker.scale.y = obstacle["width"] + self.config.vehicle_width + 2 * self.config.safety_margin
             marker.scale.z = 0.05
             marker.color.r, marker.color.g, marker.color.b, marker.color.a = 1.0, 0.1, 0.05, 0.18
-            marker.lifetime.nanosec = 180_000_000
+            marker.lifetime.nanosec = 500_000_000
             array.markers.append(marker)
         text = Marker()
         text.header.frame_id = "base_link"
@@ -187,7 +187,7 @@ class FrenetPlannerNode(Node):
         text.scale.z = 0.34
         text.color.r, text.color.g, text.color.b, text.color.a = (0.2, 1.0, 0.4, 1.0) if result.feasible else (1.0, 0.15, 0.1, 1.0)
         text.text = f"Planner: {'OK' if result.feasible else 'STOP'} | {result.planning_ms:.1f} ms | clearance {result.min_clearance:.2f} m"
-        text.lifetime.nanosec = 180_000_000
+        text.lifetime.nanosec = 500_000_000
         array.markers.append(text)
         self.debug_pub.publish(array)
 

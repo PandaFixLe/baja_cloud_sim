@@ -84,7 +84,7 @@ class TruthPerceptionNode(Node):
         marker.pose.orientation.w = 1.0
         marker.scale.x = 0.09
         marker.color.r, marker.color.g, marker.color.b, marker.color.a = color
-        marker.lifetime.nanosec = 180_000_000
+        marker.lifetime.nanosec = 500_000_000
         for item in points:
             local = world_to_base((item["x"], item["y"]), (self.pose.x, self.pose.y), self.yaw)
             if -self.backward <= local[0] <= self.forward and abs(local[1]) <= 12.0:
@@ -163,7 +163,7 @@ class TruthPerceptionNode(Node):
             marker.color.g = 0.18
             marker.color.b = 0.08
             marker.color.a = 0.72
-            marker.lifetime.nanosec = 180_000_000
+            marker.lifetime.nanosec = 500_000_000
             obstacle_array.markers.append(marker)
         self.obstacle_pub.publish(obstacle_array)
 
