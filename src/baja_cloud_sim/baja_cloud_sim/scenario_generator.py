@@ -335,9 +335,9 @@ def generate(
 <sdf version="1.9">
   <world name="baja_track">
     <physics name="high_rate_dynamics" type="ignored">
-      <max_step_size>0.004</max_step_size>
+      <max_step_size>0.005</max_step_size>
       <real_time_factor>1.0</real_time_factor>
-      <real_time_update_rate>250</real_time_update_rate>
+      <real_time_update_rate>200</real_time_update_rate>
     </physics>
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
     <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>

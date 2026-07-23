@@ -45,6 +45,8 @@ class PidPathFollowerNode(Node):
             ("max_steering_angle", 35.0),
             ("adaptive_steering", True),
             ("adaptive_speed", True),
+            ("k_stanley", 0.8),
+            ("avoidance_speed_limit", 2.0),
             ("virtual_target_timeout", 5.0),
         ):
             self.declare_parameter(name, default)
@@ -64,6 +66,8 @@ class PidPathFollowerNode(Node):
         self.max_steering_rad = math.radians(self.max_steering_deg)
         self.adaptive_steering = bool(self.get_parameter("adaptive_steering").value)
         self.adaptive_speed = bool(self.get_parameter("adaptive_speed").value)
+        self.k_stanley = float(self.get_parameter("k_stanley").value)
+        self.avoid_spd_lim = float(self.get_parameter("avoidance_speed_limit").value)
         self.virtual_timeout = float(
             self.get_parameter("virtual_target_timeout").value
         )
@@ -221,6 +225,34 @@ class PidPathFollowerNode(Node):
     # Main control loop (20 Hz)
     # ------------------------------------------------------------------
 
+    def _cross_track_error(self) -> float:
+        """Signed lateral distance from vehicle to the nearest path segment (m).
+
+        Positive = vehicle is to the right of the path.
+        """
+        if self.position is None or len(self.path) < 2:
+            return 0.0
+        vx, vy = self.position
+        best_idx = 0
+        best_d2 = float("inf")
+        for i in range(len(self.path)):
+            d2 = (self.path[i][0] - vx) ** 2 + (self.path[i][1] - vy) ** 2
+            if d2 < best_d2:
+                best_d2 = d2
+                best_idx = i
+        i = min(best_idx, len(self.path) - 2)
+        x1, y1 = self.path[i]
+        x2, y2 = self.path[i + 1]
+        dx, dy = x2 - x1, y2 - y1
+        l2 = dx * dx + dy * dy
+        if l2 < 1e-12:
+            return math.hypot(vx - x1, vy - y1)
+        t = max(0.0, min(1.0, ((vx - x1) * dx + (vy - y1) * dy) / l2))
+        proj_x = x1 + t * dx
+        proj_y = y1 + t * dy
+        cross = (vx - proj_x) * dy - (vy - proj_y) * dx
+        return cross / math.sqrt(l2)
+
     def _control(self) -> None:
         if self.position is None:
             return
@@ -272,9 +304,11 @@ class PidPathFollowerNode(Node):
             if len(self.path) < 2:
                 self._stop()
                 return
+            # Dynamic lookahead: faster speed → look further ahead
+            dyn_look = max(self.lookahead, min(self.target_speed * 1.0, 5.0))
             target = self.path[-1]
             for pt in self.path:
-                if _dist(self.position, pt) >= self.lookahead:
+                if _dist(self.position, pt) >= dyn_look:
                     target = pt
                     break
 
@@ -284,18 +318,23 @@ class PidPathFollowerNode(Node):
         desired_nav = math.atan2(east, north)
         error = wrap_angle(desired_nav - self.yaw_nav)
 
+        # Sharp recovery: extreme misalignment → limit speed, don't stop
+        recovery_lim = None
         if abs(error) > math.pi * 0.5:
-            self._stop()
-            return
+            recovery_lim = 0.5
 
-        # --- PD control (dt = 0.05) ---
+        # --- Stanley + PD control (dt = 0.05) ---
         error_rate = (error - self.prev_error) / 0.05
         self.prev_error = error
 
         curvature_est = abs(2.0 * math.sin(error) / max(self.lookahead, 0.1))
         dyn_max = self._dynamic_max_steering(curvature_est)
 
-        steering_raw = -(self.kp * error + self.kd * error_rate)
+        # Stanley lateral correction: arctan(k × cte / v), self-regulating
+        cte = self._cross_track_error()
+        stanley_term = math.atan2(self.k_stanley * cte, max(self.target_speed, 2.0))
+
+        steering_raw = -(self.kp * error + self.kd * error_rate + stanley_term)
         steering_raw = max(-dyn_max, min(dyn_max, steering_raw))
 
         # --- low-pass filter ---
@@ -315,6 +354,10 @@ class PidPathFollowerNode(Node):
         preview_curv = self._preview_curvature()
         factor = self._speed_factor(math.degrees(steering), preview_curv)
         speed = self.target_speed * factor
+        if recovery_lim is not None:
+            speed = min(speed, recovery_lim)
+        if self.avoiding:
+            speed = min(speed, self.avoid_spd_lim)
 
         # --- publish ---
         cmd = AckermannDriveStamped()

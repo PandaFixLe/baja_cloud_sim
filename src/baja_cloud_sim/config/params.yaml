@@ -41,6 +41,8 @@ pid_path_follower_node:
     max_steering_angle: 35.0
     adaptive_steering: true
     adaptive_speed: true
+    k_stanley: 0.8
+    avoidance_speed_limit: 2.0
     virtual_target_timeout: 5.0
 
 actuator_adapter_node:
