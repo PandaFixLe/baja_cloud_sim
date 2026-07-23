@@ -36,8 +36,8 @@ pid_path_follower_node:
     lookahead_distance: 3.0
     kp_heading: 1.2
     kd_heading: 0.3
-    steering_alpha: 0.6
-    max_steer_rate_deg: 15.0
+    steering_alpha: 0.75
+    max_steer_rate_deg: 30.0
     max_steering_angle: 35.0
     adaptive_steering: true
     adaptive_speed: true
