@@ -30,9 +30,10 @@ class FrenetPlannerNode(Node):
         for name, default in (
             ("origin_latitude", 30.0), ("origin_longitude", 114.0),
             ("horizon_m", 30.0), ("center_weight", 1.0),
-            ("clearance_weight", 12.0), ("desired_clearance", 1.2),
+            ("clearance_weight", 16.0), ("desired_clearance", 1.5),
             ("vehicle_length", 3.0), ("vehicle_width", 1.5),
             ("safety_margin", 0.25),
+            ("lateral_spacing_m", 0.20), ("max_lateral_step", 1.2),
         ):
             self.declare_parameter(name, default)
         self.origin_lat = float(self.get_parameter("origin_latitude").value)
@@ -45,6 +46,8 @@ class FrenetPlannerNode(Node):
             vehicle_length=float(self.get_parameter("vehicle_length").value),
             vehicle_width=float(self.get_parameter("vehicle_width").value),
             safety_margin=float(self.get_parameter("safety_margin").value),
+            lateral_spacing_m=float(self.get_parameter("lateral_spacing_m").value),
+            max_lateral_step=float(self.get_parameter("max_lateral_step").value),
         )
         self.centerline = []
         self.position = None

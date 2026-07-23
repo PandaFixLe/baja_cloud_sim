@@ -11,11 +11,13 @@ frenet_planner_node:
     origin_longitude: 114.0
     horizon_m: 30.0
     center_weight: 1.0
-    clearance_weight: 12.0
-    desired_clearance: 1.2
+    clearance_weight: 16.0
+    desired_clearance: 1.5
     vehicle_length: 1.70
     vehicle_width: 1.50
     safety_margin: 0.25
+    lateral_spacing_m: 0.20
+    max_lateral_step: 1.2
 
 path_follower_node:
   ros__parameters:
