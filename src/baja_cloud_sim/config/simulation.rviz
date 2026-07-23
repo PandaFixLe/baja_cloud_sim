@@ -93,7 +93,7 @@ Visualization Manager:
       Value: true
       Visual Enabled: true
     - Alpha: 0.8999999761581421
-      Buffer Length: 1
+      Buffer Length: 10
       Class: rviz_default_plugins/Path
       Color: 255; 170; 30
       Enabled: true
@@ -121,7 +121,7 @@ Visualization Manager:
         Value: /reference_centerline
       Value: true
     - Alpha: 1
-      Buffer Length: 1
+      Buffer Length: 10
       Class: rviz_default_plugins/Path
       Color: 60; 255; 100
       Enabled: true
@@ -149,7 +149,7 @@ Visualization Manager:
         Value: /planned_path
       Value: true
     - Alpha: 1
-      Buffer Length: 1
+      Buffer Length: 10
       Class: rviz_default_plugins/Path
       Color: 255; 55; 170
       Enabled: true

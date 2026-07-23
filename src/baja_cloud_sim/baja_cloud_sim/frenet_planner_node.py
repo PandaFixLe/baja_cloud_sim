@@ -161,6 +161,10 @@ class FrenetPlannerNode(Node):
 
     def _publish_debug(self, result) -> None:
         array = MarkerArray()
+        # Compact RViz outline around each obstacle — purely visual, decoupled
+        # from the planner's actual safety inflation so the rectangle stays
+        # small and readable in the path corridor.
+        visual_margin = 0.4
         for index, obstacle in enumerate(self.obstacles):
             marker = Marker()
             marker.header.frame_id = "map"
@@ -173,8 +177,8 @@ class FrenetPlannerNode(Node):
             marker.pose.position.y = obstacle["y"]
             marker.pose.position.z = 0.06
             _, _, marker.pose.orientation.z, marker.pose.orientation.w = yaw_to_quaternion(obstacle["yaw"])
-            marker.scale.x = obstacle["length"] + self.config.vehicle_length + 2 * self.config.safety_margin
-            marker.scale.y = obstacle["width"] + self.config.vehicle_width + 2 * self.config.safety_margin
+            marker.scale.x = obstacle["length"] + 2 * visual_margin
+            marker.scale.y = obstacle["width"] + 2 * visual_margin
             marker.scale.z = 0.05
             marker.color.r, marker.color.g, marker.color.b, marker.color.a = 1.0, 0.1, 0.05, 0.18
             marker.lifetime.nanosec = 500_000_000
