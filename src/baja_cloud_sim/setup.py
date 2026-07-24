@@ -11,13 +11,16 @@ def data_files(directory):
     root = Path(directory)
     return [
         (str(Path("share") / package_name / path.parent), [str(path)])
-        for path in root.rglob("*") if path.is_file()
+        for path in root.rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".pyc", ".pyo"}
     ]
 
 
 setup(
     name=package_name,
-    version="1.0.0",
+    version="1.1.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
