@@ -34,7 +34,7 @@ def generate_launch_description():
         DeclareLaunchArgument("video_path", default_value="results/gazebo.mp4"),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(ros_gz_share / "launch" / "gz_sim.launch.py")),
-            launch_arguments={"gz_args": ["-r -v 3 ", world]}.items(),
+            launch_arguments={"gz_args": ["-r -v 3 --render-engine-gui ogre ", world]}.items(),
             condition=IfCondition(use_gz_gui),
         ),
         IncludeLaunchDescription(
