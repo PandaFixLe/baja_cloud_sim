@@ -3,6 +3,9 @@ truth_perception_node:
     use_sim_time: true
     perception_forward: 34.0
     perception_backward: 6.0
+    localization_position_stddev_m: 0.015
+    localization_altitude_stddev_m: 0.020
+    localization_yaw_stddev_deg: 0.12
 
 frenet_planner_node:
   ros__parameters:
@@ -11,8 +14,8 @@ frenet_planner_node:
     origin_longitude: 114.0
     horizon_m: 30.0
     center_weight: 1.0
-    clearance_weight: 16.0
-    desired_clearance: 1.5
+    clearance_weight: 12.0
+    desired_clearance: 1.2
     vehicle_length: 1.70
     vehicle_width: 1.50
     safety_margin: 0.25
@@ -37,8 +40,8 @@ pid_path_follower_node:
     target_speed: 6.0
     lookahead_distance: 3.0
     kp_heading: 1.2
-    kd_heading: 0.3
-    steering_alpha: 0.75
+    kd_heading: 0.12
+    steering_alpha: 0.85
     max_steer_rate_deg: 30.0
     max_steering_angle: 35.0
     adaptive_steering: true
