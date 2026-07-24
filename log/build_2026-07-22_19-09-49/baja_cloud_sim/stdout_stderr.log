@@ -1,0 +1,41 @@
+running develop
+running egg_info
+creating baja_cloud_sim.egg-info
+writing baja_cloud_sim.egg-info/PKG-INFO
+writing dependency_links to baja_cloud_sim.egg-info/dependency_links.txt
+writing entry points to baja_cloud_sim.egg-info/entry_points.txt
+writing requirements to baja_cloud_sim.egg-info/requires.txt
+writing top-level names to baja_cloud_sim.egg-info/top_level.txt
+writing manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+reading manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+writing manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+running build_ext
+Creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja-cloud-sim.egg-link (link to .)
+Installing actuator_adapter script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing evaluator script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing frenet_planner script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing generate_scenario script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing path_follower script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing truth_perception script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+
+Installed /mnt/data/baja_cloud_sim/build/baja_cloud_sim
+running symlink_data
+creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/ament_index
+creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/ament_index/resource_index
+creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/ament_index/resource_index/packages
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/resource/baja_cloud_sim -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/ament_index/resource_index/packages
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/package.xml -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim
+creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/launch
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/launch/simulation.launch.py -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/launch
+creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/launch/__pycache__
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/launch/__pycache__/simulation.launch.cpython-312.pyc -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/launch/__pycache__
+creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/config/simulation.rviz -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/config/bridge.yaml -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/config/params.yaml -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models
+creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/models/baja_vehicle/model.config -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/models/baja_vehicle/model.sdf -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle
+creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/urdf
+symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/urdf/baja_vehicle.urdf -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/urdf

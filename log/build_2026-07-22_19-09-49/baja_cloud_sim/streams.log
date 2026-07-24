@@ -1,0 +1,43 @@
+[1.364s] Invoking command in '/mnt/data/baja_cloud_sim/build/baja_cloud_sim': PYTHONPATH=/mnt/data/baja_cloud_sim/build/baja_cloud_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /mnt/data/baja_cloud_sim/build/baja_cloud_sim/build --no-deps symlink_data
+[1.688s] running develop
+[1.888s] running egg_info
+[1.888s] creating baja_cloud_sim.egg-info
+[1.888s] writing baja_cloud_sim.egg-info/PKG-INFO
+[1.888s] writing dependency_links to baja_cloud_sim.egg-info/dependency_links.txt
+[1.888s] writing entry points to baja_cloud_sim.egg-info/entry_points.txt
+[1.888s] writing requirements to baja_cloud_sim.egg-info/requires.txt
+[1.889s] writing top-level names to baja_cloud_sim.egg-info/top_level.txt
+[1.891s] writing manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+[1.893s] reading manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+[1.894s] writing manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+[1.896s] running build_ext
+[1.896s] Creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja-cloud-sim.egg-link (link to .)
+[1.897s] Installing actuator_adapter script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[1.897s] Installing evaluator script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[1.897s] Installing frenet_planner script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[1.898s] Installing generate_scenario script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[1.898s] Installing path_follower script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[1.898s] Installing truth_perception script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[1.898s] 
+[1.898s] Installed /mnt/data/baja_cloud_sim/build/baja_cloud_sim
+[1.898s] running symlink_data
+[1.899s] creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/ament_index
+[1.899s] creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/ament_index/resource_index
+[1.899s] creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/ament_index/resource_index/packages
+[1.899s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/resource/baja_cloud_sim -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/ament_index/resource_index/packages
+[1.899s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/package.xml -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim
+[1.899s] creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/launch
+[1.899s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/launch/simulation.launch.py -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/launch
+[1.900s] creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/launch/__pycache__
+[1.900s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/launch/__pycache__/simulation.launch.cpython-312.pyc -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/launch/__pycache__
+[1.900s] creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+[1.900s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/config/simulation.rviz -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+[1.900s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/config/bridge.yaml -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+[1.900s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/config/params.yaml -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+[1.900s] creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models
+[1.900s] creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle
+[1.900s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/models/baja_vehicle/model.config -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle
+[1.900s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/models/baja_vehicle/model.sdf -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle
+[1.900s] creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/urdf
+[1.901s] symbolically linking /mnt/data/baja_cloud_sim/build/baja_cloud_sim/urdf/baja_vehicle.urdf -> /mnt/data/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/urdf
+[1.937s] Invoked command in '/mnt/data/baja_cloud_sim/build/baja_cloud_sim' returned '0': PYTHONPATH=/mnt/data/baja_cloud_sim/build/baja_cloud_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /mnt/data/baja_cloud_sim/build/baja_cloud_sim/build --no-deps symlink_data

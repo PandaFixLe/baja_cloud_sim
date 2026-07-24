@@ -1,0 +1,20 @@
+running develop
+running egg_info
+writing baja_cloud_sim.egg-info/PKG-INFO
+writing dependency_links to baja_cloud_sim.egg-info/dependency_links.txt
+writing entry points to baja_cloud_sim.egg-info/entry_points.txt
+writing requirements to baja_cloud_sim.egg-info/requires.txt
+writing top-level names to baja_cloud_sim.egg-info/top_level.txt
+reading manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+writing manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+running build_ext
+Creating /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja-cloud-sim.egg-link (link to .)
+Installing actuator_adapter script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing evaluator script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing frenet_planner script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing generate_scenario script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing path_follower script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing truth_perception script to /mnt/data/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+
+Installed /mnt/data/baja_cloud_sim/build/baja_cloud_sim
+running symlink_data
