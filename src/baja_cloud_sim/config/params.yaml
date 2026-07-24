@@ -18,6 +18,8 @@ frenet_planner_node:
     desired_clearance: 1.2
     vehicle_length: 3.0
     vehicle_width: 1.5
+    enable_path_log: true
+    path_log_dir: results
 
 path_follower_node:
   ros__parameters:
@@ -28,6 +30,15 @@ path_follower_node:
     lookahead_distance: 3.0
     kp_heading: 1.2
     max_steering_angle: 35.0
+    controller_mode: stanley
+    kd_heading: 0.3
+    k_stanley: 0.8
+    k_cte_dot: 0.15
+    k_yaw_rate: 0.5
+    steering_alpha: 0.6
+    max_steer_rate_deg: 8.0
+    adaptive_steering: true
+    adaptive_speed: true
 
 actuator_adapter_node:
   ros__parameters:

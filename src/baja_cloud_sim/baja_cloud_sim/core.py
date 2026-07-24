@@ -520,3 +520,226 @@ def legacy_path_control(
         "target_y": target[1],
         "heading_error": error,
     }
+
+
+# ---------------------------------------------------------------------------
+# Stanley + PD + dual-damping + low-pass + rate-limited steering (v1.1)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class StanleyControllerConfig(ControllerConfig):
+    """Stanley controller config; inherits geometry/speed fields from ControllerConfig."""
+
+    kd_heading: float = 0.3
+    k_stanley: float = 0.8
+    k_cte_dot: float = 0.15
+    k_yaw_rate: float = 0.5
+    steering_alpha: float = 0.6
+    max_steer_rate_deg: float = 8.0
+    yaw_rate_alpha: float = 0.7
+    yaw_rate_scale: float = 0.3
+    min_speed_for_stanley: float = 2.0
+    adaptive_steering: bool = True
+    adaptive_speed: bool = True
+    preview_curv_boost_limit: float = 1.5
+    preview_curv_boost_scale: float = 5.0
+
+
+@dataclass
+class StanleyState:
+    """Mutable controller state threaded through stanley_path_control."""
+
+    prev_heading_error: float = 0.0
+    prev_steering: float = 0.0
+    prev_yaw: float = 0.0
+    prev_cte: float = 0.0
+    yaw_rate_filtered: float = 0.0
+    last_nearest: int = 0
+    initialized: bool = False
+
+
+def augment_path_for_cte(path: Sequence[Point]) -> List[Dict[str, float]]:
+    """Convert Sequence[Point] to dicts with synthesized math-frame yaw.
+
+    The yaw at each point is the bearing of the outgoing segment (or the previous
+    bearing for the last point). Used by stanley_path_control and exposed for tests.
+    """
+    augmented: List[Dict[str, float]] = []
+    for index, point in enumerate(path):
+        if index + 1 < len(path):
+            dx = path[index + 1][0] - point[0]
+            dy = path[index + 1][1] - point[1]
+        elif augmented:
+            dx = point[0] - augmented[-1]["x"]
+            dy = point[1] - augmented[-1]["y"]
+        else:
+            dx, dy = 1.0, 0.0
+        if dx * dx + dy * dy < 1e-12:
+            yaw = augmented[-1]["yaw"] if augmented else 0.0
+        else:
+            yaw = math.atan2(dy, dx)
+        augmented.append({"x": point[0], "y": point[1], "yaw": yaw})
+    return augmented
+
+
+def preview_curvature(
+    augmented: Sequence[Dict[str, float]],
+    start_index: int,
+    lookahead_m: float,
+) -> float:
+    """Return max |Δbearing|/Δs over the next ~lookahead_m of the polyline."""
+    if start_index >= len(augmented) - 1:
+        return 0.0
+    cumulative = 0.0
+    max_curv = 0.0
+    last_bearing = wrap_angle(augmented[start_index]["yaw"])
+    for index in range(start_index + 1, len(augmented)):
+        x0 = augmented[index - 1]["x"]
+        y0 = augmented[index - 1]["y"]
+        x1 = augmented[index]["x"]
+        y1 = augmented[index]["y"]
+        segment = math.hypot(x1 - x0, y1 - y0)
+        if segment <= 1e-6:
+            continue
+        cumulative += segment
+        bearing = wrap_angle(augmented[index]["yaw"])
+        delta = abs(wrap_angle(bearing - last_bearing))
+        curv = delta / segment
+        if curv > max_curv:
+            max_curv = curv
+        last_bearing = bearing
+        if cumulative >= lookahead_m:
+            break
+    return max_curv
+
+
+def stanley_path_control(
+    current: Point,
+    yaw_navigation: float,
+    path: Sequence[Point],
+    config: Optional[StanleyControllerConfig] = None,
+    state: Optional[StanleyState] = None,
+    dt: float = 0.05,
+) -> Dict[str, object]:
+    """Stanley + PD + dual-damping + low-pass + rate-limited steering.
+
+    Returns a dict compatible with legacy_path_control (speed, steering, target_x,
+    target_y, heading_error) plus cte, preview_curvature and updated state.
+    """
+    cfg = config or StanleyControllerConfig()
+    if state is None:
+        state = StanleyState()
+
+    if len(path) < 2:
+        return {
+            "speed": 0.0,
+            "steering": 0.0,
+            "target_x": current[0],
+            "target_y": current[1],
+            "heading_error": 0.0,
+            "cte": 0.0,
+            "preview_curvature": 0.0,
+            "state": state,
+        }
+
+    augmented = augment_path_for_cte(path)
+    yaw_math = wrap_angle(math.pi * 0.5 - yaw_navigation)
+
+    nearest = nearest_index(augmented, current[0], current[1], start=state.last_nearest)
+    state.last_nearest = max(0, nearest - 4)
+
+    reference = augmented[nearest]
+    cte = signed_lateral(current, reference)
+
+    target_index = len(path) - 1
+    lookahead = max(0.5, cfg.lookahead_distance)
+    for index in range(nearest, len(path)):
+        if math.hypot(path[index][0] - current[0], path[index][1] - current[1]) >= lookahead:
+            target_index = index
+            break
+    target = path[target_index]
+    east = target[0] - current[0]
+    north = target[1] - current[1]
+    desired_navigation = math.atan2(east, north)
+    heading_error = wrap_angle(desired_navigation - yaw_navigation)
+
+    pc_lookahead = max(3.0, cfg.target_speed * 1.2)
+    preview_curv = preview_curvature(augmented, nearest, pc_lookahead)
+
+    if not state.initialized:
+        state.prev_heading_error = heading_error
+        state.prev_steering = 0.0
+        state.prev_yaw = yaw_math
+        state.prev_cte = cte
+        state.yaw_rate_filtered = 0.0
+        state.initialized = True
+
+    d_heading = wrap_angle(heading_error - state.prev_heading_error) / max(dt, 1e-3)
+    cte_dot = (cte - state.prev_cte) / max(dt, 1e-3)
+
+    yaw_rate_raw = wrap_angle(yaw_math - state.prev_yaw) / max(dt, 1e-3)
+    state.yaw_rate_filtered = (
+        cfg.yaw_rate_alpha * state.yaw_rate_filtered
+        + (1.0 - cfg.yaw_rate_alpha) * yaw_rate_raw
+    )
+    yaw_rate_term = cfg.yaw_rate_scale * state.yaw_rate_filtered
+
+    v_safe = max(cfg.target_speed, cfg.min_speed_for_stanley)
+    stanley_term = math.atan2(cfg.k_stanley * cte, v_safe)
+
+    if cfg.adaptive_steering:
+        scale = 1.0 + min(preview_curv * cfg.preview_curv_boost_scale, cfg.preview_curv_boost_limit)
+        max_steer = math.radians(cfg.max_steering_deg) / max(1.0, scale)
+    else:
+        max_steer = math.radians(cfg.max_steering_deg)
+
+    raw = (
+        -cfg.heading_gain * heading_error
+        - cfg.kd_heading * d_heading
+        - stanley_term
+        - cfg.k_cte_dot * cte_dot
+        - cfg.k_yaw_rate * yaw_rate_term
+    )
+    raw_clamped = clamp(raw, -max_steer, max_steer)
+
+    filtered = (
+        cfg.steering_alpha * raw_clamped
+        + (1.0 - cfg.steering_alpha) * state.prev_steering
+    )
+
+    rate_rad = math.radians(cfg.max_steer_rate_deg)
+    delta = clamp(filtered - state.prev_steering, -rate_rad, rate_rad)
+    steering = state.prev_steering + delta
+
+    state.prev_heading_error = heading_error
+    state.prev_steering = steering
+    state.prev_yaw = yaw_math
+    state.prev_cte = cte
+
+    steering_deg = abs(math.degrees(steering))
+    if steering_deg > 30.0:
+        speed_factor = 0.50
+    elif steering_deg > 20.0:
+        speed_factor = 0.70
+    elif steering_deg > 12.0:
+        speed_factor = 0.85
+    elif steering_deg > 6.0:
+        speed_factor = 0.95
+    else:
+        speed_factor = 1.0
+
+    if cfg.adaptive_speed:
+        adaptive_scale = 1.0 / (1.0 + preview_curv * 3.0)
+        speed_factor *= max(0.30, adaptive_scale)
+
+    return {
+        "speed": cfg.target_speed * speed_factor,
+        "steering": steering,
+        "target_x": target[0],
+        "target_y": target[1],
+        "heading_error": heading_error,
+        "cte": cte,
+        "preview_curvature": preview_curv,
+        "state": state,
+    }

@@ -114,6 +114,31 @@ video_recorder_node.py    video_recorder：录制 Gazebo 追踪相机视频
 跟踪、`actuator_adapter` 执行。坐标基础、与 Apollo EM Planner 的关联、简化形式与运行时结构
 详见 [`docs/frenet_planner.md`](docs/frenet_planner.md)。
 
+**v1.1 follow 控制律**：v1.0 的 `path_follower` 使用 `legacy_path_control`（纯航向 P + 预瞄
++ 按转角分档降速）。v1.1 在 `core.py` 中新增 `stanley_path_control`，由潘
+`path_follower_node_path3.py` 的精华提炼而来：
+
+- **Stanley 主项** `atan2(k_stanley · CTE, max(target_speed, 2.0))`，由 `signed_lateral`
+  提供带符号横向偏差；
+- **PD 主项** `kp · heading_error + kd · d_heading/dt`；
+- **双阻尼**：CTE 变化率（`k_cte_dot`）抑制冲出，航向角速度（`k_yaw_rate`，低通
+  `α=0.7` 后乘 `0.3`）抑制急弯出弯过冲；
+- **转向平滑**：动态最大转角（自适应）、转向低通（`α=0.6`）、单帧速率限制
+  `max_steer_rate_deg`；
+- **按转角分档降速**（与 v1.0 legacy 表一致：`>30°/20°/12°/6° → 0.50/0.70/0.85/0.95`），
+  可选按前方前瞻曲率自适应降速（`adaptive_speed`）。
+
+选择由新增参数 `controller_mode ∈ {legacy, stanley}` 控制，默认 `stanley`；
+`legacy` 保留为回退入口，用于回归对比与故障兜底。详细规划与参数表见
+[`docs/planning/v1.1-backlog.md`](docs/planning/v1.1-backlog.md)，
+决策依据与算法来源见
+[`docs/planning/background-pan-code.md`](docs/planning/background-pan-code.md)。
+
+**v1.1 planner CSV 日志**：`frenet_planner_node` 新增旁路 CSV 日志（参数
+`enable_path_log`、`path_log_dir`），每个 10 Hz 规划周期写一个
+`planned_path_<timestamp>.csv`（列：`timestamp_s, x, y, yaw, seq`）。**写失败不致命**，
+仅 warn，绝不阻塞发布。
+
 ## 已知问题：Frenet 规划器的时间戳与时间同步
 
 `frenet_planner_node.py` 目前对各传感器话题采用"最新值快照"策略，回调里完全没有使用消息头
