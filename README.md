@@ -6,6 +6,16 @@ Python 标准库和 ROS 2 消息，不依赖 Torch、NumPy、SciPy、OpenCV。
 > 规划核心 Frenet 局部规划器的坐标基础、与 Apollo EM Planner 的关联、简化形式与运行时
 > 结构，详见 [`docs/frenet_planner.md`](docs/frenet_planner.md)。
 
+## 文档索引
+
+| 文档 | 用途 |
+| --- | --- |
+| [`docs/frenet_planner.md`](docs/frenet_planner.md) | Frenet 局部规划器的坐标基础、Apollo EM Planner 关联、简化形式与运行时结构 |
+| [`docs/releases/v1.0.md`](docs/releases/v1.0.md) | 当前 v1.0 基线（分层架构定型版）的发布说明 |
+| [`docs/planning/v1.1-backlog.md`](docs/planning/v1.1-backlog.md) | v1.1 待办清单：移植 Stanley 控制律、follow 节点精简、planner CSV 旁路日志 |
+| [`docs/planning/post-v1.1-backlog.md`](docs/planning/post-v1.1-backlog.md) | v1.1 之后的结构性改进项：接口扩展、安全契约、时间戳治理、real/sim 复用 |
+| [`docs/planning/background-pan-code.md`](docs/planning/background-pan-code.md) | 项目由单节点状态机演化为分层架构的背景，以及潘 `path_follower_node_path3.py` 的原理与作用 |
+
 ## 场景与车辆
 
 - 约 100 m 路线：50 m 长直道、半径 15 m 的 90°左转和末段直道；
