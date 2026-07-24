@@ -8,15 +8,24 @@ Python 标准库和 ROS 2 消息，不依赖 Torch、NumPy、SciPy、OpenCV。
 
 ## 文档索引
 
+### 背景与原理
+
 | 文档 | 用途 |
 | --- | --- |
+| [`docs/background.md`](docs/background.md) | 项目从"单节点状态机"演化为"分层架构"的来龙去脉 |
 | [`docs/frenet_planner.md`](docs/frenet_planner.md) | Frenet 局部规划器的坐标基础、Apollo EM Planner 关联、简化形式与运行时结构 |
+| [`docs/follow_controller.md`](docs/follow_controller.md) | 下层控制器（follow）的几何核心、Stanley 主项、PD + 阻尼、转向平滑；潘 `path_follower_node_path3.py` 的原理与移植过程 |
+| [`docs/yaml_spec.md`](docs/yaml_spec.md) | 工程规范：算法参数真源（`algorithm_defaults` + `from_yaml`）与运行时调参（`enable_*` 范式）|
+
+### 发布说明与状态
+
+| 文档 | 用途 |
+| --- | --- |
 | [`docs/releases/v1.0.md`](docs/releases/v1.0.md) | v1.0 基线（分层架构定型版）的发布说明 |
-| [`docs/releases/v1.1.md`](docs/releases/v1.1.md) | v1.1 发布说明：Stanley 控制律移植 + planner 旁路 CSV 日志 |
-| [`docs/releases/v1.1-yaml-spec.md`](docs/releases/v1.1-yaml-spec.md) | v1.1-yaml-spec 发布说明：算法参数 yaml 真源 + 运行时调参基础设施（首个 `enable_obstacles` 开关）|
-| [`docs/planning/v1.1-backlog.md`](docs/planning/v1.1-backlog.md) | v1.1 待办清单：移植 Stanley 控制律、follow 节点精简、planner CSV 旁路日志 |
-| [`docs/planning/post-v1.1-backlog.md`](docs/planning/post-v1.1-backlog.md) | v1.1 之后的结构性改进项：接口扩展、安全契约、时间戳治理、real/sim 复用 |
-| [`docs/planning/background-pan-code.md`](docs/planning/background-pan-code.md) | 项目由单节点状态机演化为分层架构的背景，以及潘 `path_follower_node_path3.py` 的原理与作用 |
+| [`docs/releases/v1.1-mvp0.md`](docs/releases/v1.1-mvp0.md) | v1.1-mvp0（最简融合单元）：Stanley 控制律移植 + planner 旁路 CSV 日志 |
+| [`docs/releases/v1.1-yaml.md`](docs/releases/v1.1-yaml.md) | v1.1-yaml：算法参数 yaml 真源 + 首个 `enable_obstacles` 运行时开关 |
+| [`docs/releases/v1.1-status.md`](docs/releases/v1.1-status.md) | v1.1 总体进度与完成状态表（"驾驶舱"）|
+| [`docs/releases/post-v1.1.md`](docs/releases/post-v1.1.md) | v1.1 之后内容清单（接口扩展 / 安全契约 / 时间戳治理 / 复用与发布）|
 
 ## 场景与车辆
 
