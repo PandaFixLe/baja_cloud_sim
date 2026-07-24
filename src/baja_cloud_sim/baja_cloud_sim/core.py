@@ -333,11 +333,11 @@ class PlannerConfig:
     def from_yaml(
         cls,
         source: Union[str, Dict[str, Any], None] = None,
-        key: str = "algorithm_defaults",
+        key: Optional[str] = None,
         group: str = "planner",
         **overrides: Any,
     ) -> "PlannerConfig":
-        """Construct from params.yaml's algorithm_defaults block; falls back silently."""
+        """Construct from algorithm_defaults.yaml (or pass a dict); falls back silently."""
         defaults = load_algorithm_defaults(source, key=key)
         merged: Dict[str, Any] = {**defaults.get(group, {}), **overrides}
         return cls(**merged)
@@ -495,11 +495,11 @@ class ControllerConfig:
     def from_yaml(
         cls,
         source: Union[str, Dict[str, Any], None] = None,
-        key: str = "algorithm_defaults",
+        key: Optional[str] = None,
         group: str = "controller",
         **overrides: Any,
     ) -> "ControllerConfig":
-        """Construct from params.yaml's algorithm_defaults block; falls back silently."""
+        """Construct from algorithm_defaults.yaml (or pass a dict); falls back silently."""
         defaults = load_algorithm_defaults(source, key=key)
         merged: Dict[str, Any] = {**defaults.get(group, {}), **overrides}
         return cls(**merged)
@@ -555,14 +555,17 @@ def legacy_path_control(
 
 def load_algorithm_defaults(
     source: Union[str, Dict[str, Any], None] = None,
-    key: str = "algorithm_defaults",
+    key: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """Return the algorithm_defaults block as a dict, grouped by dataclass.
+    """Return the algorithm defaults as a dict, grouped by dataclass.
 
     Args:
         source: Either a path to a YAML file, or an already-parsed dict.
                 If None, returns an empty dict (caller falls back to dataclass defaults).
-        key:    The top-level YAML key that holds the algorithm block.
+        key:    If given, the top-level YAML key that holds the algorithm block
+                (e.g. "algorithm_defaults" inside params.yaml). If None, the
+                whole document is treated as the defaults dict (the natural
+                shape of a standalone algorithm_defaults.yaml file).
 
     Returns:
         {"planner": {...}, "controller": {...}, "stanley_controller": {...}}
@@ -578,10 +581,13 @@ def load_algorithm_defaults(
     if source is None:
         return {}
     if isinstance(source, dict):
-        block = source.get(key, {})
-        if not isinstance(block, dict):
+        if key is None:
+            doc = source
+        else:
+            doc = source.get(key, {})
+        if not isinstance(doc, dict):
             return {}
-        return {k: dict(v) for k, v in block.items() if isinstance(v, dict)}
+        return {k: dict(v) for k, v in doc.items() if isinstance(v, dict)}
     # source is a path string
     try:
         with open(source, "r", encoding="utf-8") as handle:
@@ -589,10 +595,12 @@ def load_algorithm_defaults(
     except OSError:
         return {}
     parsed = _parse_simple_yaml(text)
-    block = parsed.get(key, {}) if isinstance(parsed, dict) else {}
-    if not isinstance(block, dict):
+    if not isinstance(parsed, dict):
         return {}
-    return {k: dict(v) for k, v in block.items() if isinstance(v, dict)}
+    doc = parsed if key is None else parsed.get(key, {})
+    if not isinstance(doc, dict):
+        return {}
+    return {k: dict(v) for k, v in doc.items() if isinstance(v, dict)}
 
 
 def _parse_simple_yaml(text: str) -> Dict[str, Any]:
@@ -682,11 +690,11 @@ class StanleyControllerConfig(ControllerConfig):
     def from_yaml(
         cls,
         source: Union[str, Dict[str, Any], None] = None,
-        key: str = "algorithm_defaults",
+        key: Optional[str] = None,
         group: str = "stanley_controller",
         **overrides: Any,
     ) -> "StanleyControllerConfig":
-        """Construct from params.yaml's algorithm_defaults block; falls back silently."""
+        """Construct from algorithm_defaults.yaml (or pass a dict); falls back silently."""
         defaults = load_algorithm_defaults(source, key=key)
         merged: Dict[str, Any] = {**defaults.get(group, {}), **overrides}
         return cls(**merged)

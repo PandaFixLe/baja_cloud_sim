@@ -1,0 +1,51 @@
+# ============================================================
+# 算法默认参数（v1.1-yaml 规范）
+# 与 core.py 三个 dataclass 字段严格对齐；缺字段 → 用 dataclass 默认值。
+# 与 params.yaml 是两个独立文件：params.yaml 给 ROS 节点、
+# 此文件给 core.from_yaml 加载。
+#
+# 加载入口（core.py）：
+#   PlannerConfig.from_yaml(
+#       "src/baja_cloud_sim/config/algorithm_defaults.yaml",
+#       group="planner",
+#   )
+# ============================================================
+planner:
+  # PlannerConfig
+  horizon_m: 30.0
+  layer_spacing_m: 1.0
+  lateral_spacing_m: 0.25
+  vehicle_length: 3.0
+  vehicle_width: 1.5
+  safety_margin: 0.25
+  desired_clearance: 1.2
+  center_weight: 1.0
+  clearance_weight: 12.0
+  smooth_weight: 7.0
+  slope_weight: 3.0
+  max_lateral_step: 0.9
+controller:
+  # ControllerConfig
+  target_speed: 2.5
+  lookahead_distance: 3.0
+  heading_gain: 1.2
+  max_steering_deg: 35.0
+stanley_controller:
+  # StanleyControllerConfig
+  target_speed: 2.5
+  lookahead_distance: 3.0
+  heading_gain: 1.2
+  max_steering_deg: 35.0
+  kd_heading: 0.3
+  k_stanley: 0.8
+  k_cte_dot: 0.15
+  k_yaw_rate: 0.5
+  steering_alpha: 0.6
+  max_steer_rate_deg: 8.0
+  yaw_rate_alpha: 0.7
+  yaw_rate_scale: 0.3
+  min_speed_for_stanley: 2.0
+  adaptive_steering: true
+  adaptive_speed: true
+  preview_curv_boost_limit: 1.5
+  preview_curv_boost_scale: 5.0

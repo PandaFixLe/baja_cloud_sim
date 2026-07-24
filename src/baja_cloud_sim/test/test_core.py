@@ -141,6 +141,7 @@ class CoreTests(unittest.TestCase):
     # --- v1.1-yaml-spec-test: algorithm_defaults loading ---
 
     def test_from_yaml_full_block_via_dict(self):
+        # params.yaml-style: dict with an "algorithm_defaults" wrapper.
         source = {
             "algorithm_defaults": {
                 "planner": {"horizon_m": 50.0, "safety_margin": 0.5},
@@ -148,9 +149,9 @@ class CoreTests(unittest.TestCase):
                 "stanley_controller": {"k_stanley": 1.2, "target_speed": 3.0},
             }
         }
-        planner = PlannerConfig.from_yaml(source)
-        controller = ControllerConfig.from_yaml(source)
-        stanley = StanleyControllerConfig.from_yaml(source)
+        planner = PlannerConfig.from_yaml(source, key="algorithm_defaults")
+        controller = ControllerConfig.from_yaml(source, key="algorithm_defaults")
+        stanley = StanleyControllerConfig.from_yaml(source, key="algorithm_defaults")
         self.assertAlmostEqual(planner.horizon_m, 50.0)
         self.assertAlmostEqual(planner.safety_margin, 0.5)
         # Untouched field keeps dataclass default.
@@ -185,6 +186,7 @@ class CoreTests(unittest.TestCase):
         self.assertAlmostEqual(planner.clearance_weight, 15.0)
 
     def test_load_algorithm_defaults_with_real_yaml_file(self):
+        # params.yaml-style file: top-level "algorithm_defaults" wrapper.
         yaml_text = (
             "# comment line\n"
             "algorithm_defaults:\n"
@@ -203,12 +205,42 @@ class CoreTests(unittest.TestCase):
             handle.write(yaml_text)
             path = handle.name
         try:
-            defaults = load_algorithm_defaults(path)
+            defaults = load_algorithm_defaults(path, key="algorithm_defaults")
             self.assertAlmostEqual(defaults["planner"]["horizon_m"], 42.0)
             self.assertAlmostEqual(defaults["planner"]["safety_margin"], 0.33)
             self.assertAlmostEqual(defaults["controller"]["target_speed"], 3.7)
             self.assertAlmostEqual(defaults["stanley_controller"]["k_stanley"], 1.1)
             self.assertFalse(defaults["stanley_controller"]["adaptive_steering"])
+        finally:
+            os.unlink(path)
+
+    def test_load_algorithm_defaults_standalone_file(self):
+        # algorithm_defaults.yaml-style file: NO top-level wrapper.
+        yaml_text = (
+            "planner:\n"
+            "  horizon_m: 50.0\n"
+            "  safety_margin: 0.4\n"
+            "controller:\n"
+            "  target_speed: 4.0\n"
+            "stanley_controller:\n"
+            "  k_stanley: 1.2\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(yaml_text)
+            path = handle.name
+        try:
+            # key=None: treat the whole document as defaults.
+            defaults = load_algorithm_defaults(path)
+            self.assertAlmostEqual(defaults["planner"]["horizon_m"], 50.0)
+            self.assertAlmostEqual(defaults["planner"]["safety_margin"], 0.4)
+            self.assertAlmostEqual(defaults["controller"]["target_speed"], 4.0)
+            self.assertAlmostEqual(defaults["stanley_controller"]["k_stanley"], 1.2)
+            # from_yaml on the standalone file (no key arg) also works.
+            planner = PlannerConfig.from_yaml(path)
+            self.assertAlmostEqual(planner.horizon_m, 50.0)
+            self.assertAlmostEqual(planner.safety_margin, 0.4)
         finally:
             os.unlink(path)
 
