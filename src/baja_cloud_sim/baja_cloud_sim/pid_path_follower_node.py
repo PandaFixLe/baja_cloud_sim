@@ -39,8 +39,8 @@ class PidPathFollowerNode(Node):
             ("target_speed", 2.5),
             ("lookahead_distance", 3.0),
             ("kp_heading", 1.2),
-            ("kd_heading", 0.3),
-            ("steering_alpha", 0.75),
+            ("kd_heading", 0.12),
+            ("steering_alpha", 0.85),
             ("max_steer_rate_deg", 30.0),
             ("max_steering_angle", 35.0),
             ("adaptive_steering", True),
@@ -88,6 +88,8 @@ class PidPathFollowerNode(Node):
         # PD / filter state
         self.prev_error: float = 0.0
         self.prev_steering: float = 0.0
+        self.prev_time = None
+        self.commanded_speed = self.target_speed
 
         # ---- publishers ----
         self.cmd_pub = self.create_publisher(AckermannDriveStamped, "/cmd_control", 10)
@@ -323,16 +325,27 @@ class PidPathFollowerNode(Node):
         if abs(error) > math.pi * 0.5:
             recovery_lim = 0.5
 
-        # --- Stanley + PD control (dt = 0.05) ---
-        error_rate = (error - self.prev_error) / 0.05
+        # --- Stanley + PD control (real elapsed dt) ---
+        # First cycle has no derivative history, so skip the D term to
+        # avoid a 1000x / dt spike on the first reading.
+        if self.prev_time is None:
+            self.prev_time = now
+            error_rate = 0.0
+        else:
+            dt = max(1e-3, (now - self.prev_time).nanoseconds / 1e9)
+            self.prev_time = now
+            error_rate = (error - self.prev_error) / dt
         self.prev_error = error
 
         curvature_est = abs(2.0 * math.sin(error) / max(self.lookahead, 0.1))
         dyn_max = self._dynamic_max_steering(curvature_est)
 
-        # Stanley lateral correction: arctan(k × cte / v), self-regulating
+        # Stanley lateral correction: arctan(k × cte / v), self-regulating.
+        # Use the previously commanded speed so the two control terms stay
+        # consistent when adaptive speed is throttling output.
         cte = self._cross_track_error()
-        stanley_term = math.atan2(self.k_stanley * cte, max(self.target_speed, 2.0))
+        cte_velocity = max(self.commanded_speed, 0.5)
+        stanley_term = math.atan2(self.k_stanley * cte, cte_velocity)
 
         steering_raw = -(self.kp * error + self.kd * error_rate + stanley_term)
         steering_raw = max(-dyn_max, min(dyn_max, steering_raw))
@@ -358,6 +371,7 @@ class PidPathFollowerNode(Node):
             speed = min(speed, recovery_lim)
         if self.avoiding:
             speed = min(speed, self.avoid_spd_lim)
+        self.commanded_speed = speed
 
         # --- publish ---
         cmd = AckermannDriveStamped()
@@ -388,6 +402,8 @@ class PidPathFollowerNode(Node):
         self.cmd_pub.publish(cmd)
         self.prev_error = 0.0
         self.prev_steering = 0.0
+        self.prev_time = None
+        self.commanded_speed = self.target_speed
 
 
 def main(args=None) -> None:
