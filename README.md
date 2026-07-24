@@ -79,6 +79,43 @@ frenet_planner
 `/wheel_odom` 是 Ackermann 插件根据轮速和转向角积分得到的轮式里程计；它与世界真值分开，
 不用于闭环评价。
 
+## 已知问题：Frenet 规划器的时间戳与时间同步
+
+`frenet_planner_node.py` 目前对各传感器话题采用"最新值快照"策略，回调里完全没有使用消息头
+`header.stamp`，存在以下时间戳相关问题：
+
+1. **多源数据无时间同步**：`/gps/fix`、`/imu/yaw`、`/road_boundary_markers`、
+   `/obstacle_markers` 分别在各自回调里直接覆盖 `self.position`、`self.yaw_world`、
+   `self.left_world` / `self.right_world`、`self.obstacles`。定时器 `_plan`（10 Hz）触发时
+   把当前所有最新值直接融合，不校验它们是否来自同一时刻。各话题频率不同（GPS/IMU 约 20 Hz、
+   边界/障碍约 10 Hz），因此每次规划使用的其实是一组时间上并不对齐的数据。此外 `/imu/yaw`
+   使用 `std_msgs/Float32`，消息本身没有 header，从类型上就无法携带时间戳。
+
+2. **坐标变换用的是回调时刻位姿，而非传感器采样时刻位姿**：`_boundary_callback`、
+   `_obstacle_callback` 用 `base_to_world(..., self.position, self.yaw_world)` 把车体系点
+   转到世界系，使用的是"当前最新"的位姿，而不是该边界/障碍消息被观测时的位姿。当车辆以速度
+   v 行驶、位姿与感知数据存在 Δt 的时间差时，会引入约 v·Δt 的位置误差（例如
+   5 m/s × 50 ms ≈ 0.25 m），障碍膨胀框和可行走廊会随之偏移。
+
+3. **规划路径盖的是"发布时刻"时间戳**：`_plan` 中
+   `message.header.stamp = self.get_clock().now().to_msg()`，输出的 `/planned_path` 打的是
+   发布瞬间的时间，而不是其所依据的里程计/感知数据的时间。下游（`path_follower`、
+   `evaluator`）无法据此判断规划结果对应的真实时刻与延迟，容易产生时间错位（类似评价节点
+   历史上出现过的 ghost trail 问题）。
+
+4. **缺少数据新鲜度检查**：`_plan` 仅检查数据是否存在（`self.position is None`、
+   `len(self.centerline) < 3` 等），不检查数据是否过期。一旦 GPS/IMU 掉线，规划器会无限期
+   沿用陈旧位姿，而不会降级或安全停车。
+
+**改进方向**：
+
+- 订阅时读取并保存每条消息的 `header.stamp`，在 `_plan` 中对齐到共同时间基准，或使用
+  `message_filters` 做近似时间同步；对 `/imu/yaw` 换用带 header 的消息类型（如
+  `sensor_msgs/Imu`）。
+- 坐标变换使用与感知消息时间戳最接近的位姿，对位姿做时间插值/外推后再做 `base_to_world`。
+- `/planned_path` 使用输入数据的时间戳而非发布时刻，保证与下游的时间一致性。
+- 增加数据超时判断，超时则发布 `INFEASIBLE` 或触发安全停车。
+
 ## 输出
 
 ```text
