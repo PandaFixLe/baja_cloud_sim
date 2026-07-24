@@ -12,7 +12,7 @@
     <link name="base_link">
       <pose>0 0 0 0 0 0</pose>
       <inertial>
-        <mass>252.0</mass>
+        <mass>210.0</mass>
         <pose>-0.08 0 0 0 0 0</pose>
         <inertia>
           <ixx>50.60</ixx>
@@ -422,6 +422,7 @@
       <wheel_base>1.43</wheel_base>
       <wheel_radius>0.292</wheel_radius>
       <steering_limit>0.610865</steering_limit>
+      <steer_p_gain>18.0</steer_p_gain>
       <min_velocity>-1.0</min_velocity>
       <max_velocity>5.0</max_velocity>
       <min_acceleration>-4.0</min_acceleration>
