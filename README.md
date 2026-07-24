@@ -11,7 +11,9 @@ Python 标准库和 ROS 2 消息，不依赖 Torch、NumPy、SciPy、OpenCV。
 | 文档 | 用途 |
 | --- | --- |
 | [`docs/frenet_planner.md`](docs/frenet_planner.md) | Frenet 局部规划器的坐标基础、Apollo EM Planner 关联、简化形式与运行时结构 |
-| [`docs/releases/v1.0.md`](docs/releases/v1.0.md) | 当前 v1.0 基线（分层架构定型版）的发布说明 |
+| [`docs/releases/v1.0.md`](docs/releases/v1.0.md) | v1.0 基线（分层架构定型版）的发布说明 |
+| [`docs/releases/v1.1.md`](docs/releases/v1.1.md) | v1.1 发布说明：Stanley 控制律移植 + planner 旁路 CSV 日志 |
+| [`docs/releases/v1.1-yaml-spec.md`](docs/releases/v1.1-yaml-spec.md) | v1.1-yaml-spec 发布说明：算法参数 yaml 真源 + 运行时调参基础设施（首个 `enable_obstacles` 开关）|
 | [`docs/planning/v1.1-backlog.md`](docs/planning/v1.1-backlog.md) | v1.1 待办清单：移植 Stanley 控制律、follow 节点精简、planner CSV 旁路日志 |
 | [`docs/planning/post-v1.1-backlog.md`](docs/planning/post-v1.1-backlog.md) | v1.1 之后的结构性改进项：接口扩展、安全契约、时间戳治理、real/sim 复用 |
 | [`docs/planning/background-pan-code.md`](docs/planning/background-pan-code.md) | 项目由单节点状态机演化为分层架构的背景，以及潘 `path_follower_node_path3.py` 的原理与作用 |
