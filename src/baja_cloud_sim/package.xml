@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>baja_cloud_sim</name>
-  <version>1.0.0</version>
+  <version>1.1.0</version>
   <description>Cloud-ready 100 m dirt-road planning and control simulation for ROS 2 and Gazebo.</description>
   <maintainer email="team@example.com">Baja Autonomous Team</maintainer>
   <license>MIT</license>
