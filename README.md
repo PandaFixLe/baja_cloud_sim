@@ -3,6 +3,9 @@
 面向 Ubuntu 22.04、ROS 2 Humble 和 Gazebo Harmonic 的规划控制闭环工程。算法节点只使用
 Python 标准库和 ROS 2 消息，不依赖 Torch、NumPy、SciPy、OpenCV。
 
+> 规划核心 Frenet 局部规划器的坐标基础、与 Apollo EM Planner 的关联、简化形式与运行时
+> 结构，详见 [`docs/frenet_planner.md`](docs/frenet_planner.md)。
+
 ## 场景与车辆
 
 - 约 100 m 路线：50 m 长直道、半径 15 m 的 90°左转和末段直道；
@@ -78,6 +81,28 @@ frenet_planner
 
 `/wheel_odom` 是 Ackermann 插件根据轮速和转向角积分得到的轮式里程计；它与世界真值分开，
 不用于闭环评价。
+
+## 代码结构与核心逻辑
+
+算法包位于 `src/baja_cloud_sim/baja_cloud_sim/`，各节点与入口名（见 `setup.py` 的
+`console_scripts`）如下：
+
+```text
+core.py                   纯 Python 几何/规划/控制函数库（无 ROS 依赖，云端与车端通用）
+scenario_generator.py     generate_scenario：按 seed 生成中心线、边界、障碍与 Gazebo 世界
+truth_perception_node.py  truth_perception：由真值里程计派生定位/GPS/IMU/中心线/边界/障碍话题
+frenet_planner_node.py    frenet_planner：规划核心，输出 /planned_path
+path_follower_node.py     path_follower：路径跟踪，输出 /cmd_control（期望速度 + 转角）
+actuator_adapter_node.py  actuator_adapter：/cmd_control → Gazebo AckermannSteering 指令
+evaluator_node.py         evaluator：跟踪误差等指标评价与 CSV 记录
+video_recorder_node.py    video_recorder：录制 Gazebo 追踪相机视频
+```
+
+**核心逻辑**：本工程的规划核心是 Frenet 局部规划器（`frenet_planner_node.py` 与 `core.py`
+的 `plan_frenet_path`）。它在车道中心线构成的 Frenet 坐标系下，用"分层撒点 + 动态规划"搜索
+一条居中、平顺、无碰撞的局部路径，以 10 Hz 周期发布 `/planned_path`，再交由 `path_follower`
+跟踪、`actuator_adapter` 执行。坐标基础、与 Apollo EM Planner 的关联、简化形式与运行时结构
+详见 [`docs/frenet_planner.md`](docs/frenet_planner.md)。
 
 ## 已知问题：Frenet 规划器的时间戳与时间同步
 
