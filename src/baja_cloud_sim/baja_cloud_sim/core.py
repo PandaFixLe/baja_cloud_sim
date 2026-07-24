@@ -10,7 +10,7 @@ import math
 import random
 import time
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 
 Point = Tuple[float, float]
@@ -329,6 +329,19 @@ class PlannerConfig:
     slope_weight: float = 3.0
     max_lateral_step: float = 0.9
 
+    @classmethod
+    def from_yaml(
+        cls,
+        source: Union[str, Dict[str, Any], None] = None,
+        key: str = "algorithm_defaults",
+        group: str = "planner",
+        **overrides: Any,
+    ) -> "PlannerConfig":
+        """Construct from params.yaml's algorithm_defaults block; falls back silently."""
+        defaults = load_algorithm_defaults(source, key=key)
+        merged: Dict[str, Any] = {**defaults.get(group, {}), **overrides}
+        return cls(**merged)
+
 
 @dataclass
 class PlanResult:
@@ -478,6 +491,19 @@ class ControllerConfig:
     heading_gain: float = 1.2
     max_steering_deg: float = 35.0
 
+    @classmethod
+    def from_yaml(
+        cls,
+        source: Union[str, Dict[str, Any], None] = None,
+        key: str = "algorithm_defaults",
+        group: str = "controller",
+        **overrides: Any,
+    ) -> "ControllerConfig":
+        """Construct from params.yaml's algorithm_defaults block; falls back silently."""
+        defaults = load_algorithm_defaults(source, key=key)
+        merged: Dict[str, Any] = {**defaults.get(group, {}), **overrides}
+        return cls(**merged)
+
 
 def legacy_path_control(
     current: Point,
@@ -523,6 +549,113 @@ def legacy_path_control(
 
 
 # ---------------------------------------------------------------------------
+# Algorithm default-parameter loading (v1.1-yaml-spec-test)
+# ---------------------------------------------------------------------------
+
+
+def load_algorithm_defaults(
+    source: Union[str, Dict[str, Any], None] = None,
+    key: str = "algorithm_defaults",
+) -> Dict[str, Dict[str, Any]]:
+    """Return the algorithm_defaults block as a dict, grouped by dataclass.
+
+    Args:
+        source: Either a path to a YAML file, or an already-parsed dict.
+                If None, returns an empty dict (caller falls back to dataclass defaults).
+        key:    The top-level YAML key that holds the algorithm block.
+
+    Returns:
+        {"planner": {...}, "controller": {...}, "stanley_controller": {...}}
+        Missing groups or fields are simply absent; callers must merge with
+        dataclass defaults.
+
+    Notes:
+        Tries to import PyYAML; if unavailable, falls back to a hand-rolled
+        minimal reader for the simple block-style format this project uses.
+        Any failure (file missing, parse error) returns {} silently so
+        algorithm libraries never crash on missing config.
+    """
+    if source is None:
+        return {}
+    if isinstance(source, dict):
+        block = source.get(key, {})
+        if not isinstance(block, dict):
+            return {}
+        return {k: dict(v) for k, v in block.items() if isinstance(v, dict)}
+    # source is a path string
+    try:
+        with open(source, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return {}
+    parsed = _parse_simple_yaml(text)
+    block = parsed.get(key, {}) if isinstance(parsed, dict) else {}
+    if not isinstance(block, dict):
+        return {}
+    return {k: dict(v) for k, v in block.items() if isinstance(v, dict)}
+
+
+def _parse_simple_yaml(text: str) -> Dict[str, Any]:
+    """Minimal hand-rolled YAML reader for the simple block style this project uses."""
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(text)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    # Hand-rolled fallback
+    root: Dict[str, Any] = {}
+    stack: List[Any] = [root]
+    indents: List[int] = [-1]
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped)
+        while indents and indent <= indents[-1] and len(stack) > 1:
+            stack.pop()
+            indents.pop()
+        if ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        key = key.strip()
+        value = value.strip()
+        parent = stack[-1]
+        if value == "":
+            new_dict: Dict[str, Any] = {}
+            if isinstance(parent, dict):
+                parent[key] = new_dict
+            stack.append(new_dict)
+            indents.append(indent)
+        else:
+            if isinstance(parent, dict):
+                parent[key] = _coerce_scalar(value)
+    return root
+
+
+def _coerce_scalar(text: str) -> Any:
+    """Best-effort YAML scalar coercion (bool, int, float, str)."""
+    lowered = text.lower()
+    if lowered in ("true", "yes"):
+        return True
+    if lowered in ("false", "no"):
+        return False
+    if lowered in ("null", "~", ""):
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    return text
+
+
+# ---------------------------------------------------------------------------
 # Stanley + PD + dual-damping + low-pass + rate-limited steering (v1.1)
 # ---------------------------------------------------------------------------
 
@@ -544,6 +677,19 @@ class StanleyControllerConfig(ControllerConfig):
     adaptive_speed: bool = True
     preview_curv_boost_limit: float = 1.5
     preview_curv_boost_scale: float = 5.0
+
+    @classmethod
+    def from_yaml(
+        cls,
+        source: Union[str, Dict[str, Any], None] = None,
+        key: str = "algorithm_defaults",
+        group: str = "stanley_controller",
+        **overrides: Any,
+    ) -> "StanleyControllerConfig":
+        """Construct from params.yaml's algorithm_defaults block; falls back silently."""
+        defaults = load_algorithm_defaults(source, key=key)
+        merged: Dict[str, Any] = {**defaults.get(group, {}), **overrides}
+        return cls(**merged)
 
 
 @dataclass

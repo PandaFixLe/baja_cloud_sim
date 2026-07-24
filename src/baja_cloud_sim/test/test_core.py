@@ -1,4 +1,6 @@
 import math
+import os
+import tempfile
 import unittest
 
 from baja_cloud_sim.core import (
@@ -11,6 +13,7 @@ from baja_cloud_sim.core import (
     generate_centerline,
     generate_obstacles,
     legacy_path_control,
+    load_algorithm_defaults,
     plan_frenet_path,
     preview_curvature,
     signed_lateral,
@@ -134,6 +137,80 @@ class CoreTests(unittest.TestCase):
         path = self._straight_path()
         augmented = augment_path_for_cte(path)
         self.assertLess(preview_curvature(augmented, 0, 3.0), 1e-9)
+
+    # --- v1.1-yaml-spec-test: algorithm_defaults loading ---
+
+    def test_from_yaml_full_block_via_dict(self):
+        source = {
+            "algorithm_defaults": {
+                "planner": {"horizon_m": 50.0, "safety_margin": 0.5},
+                "controller": {"target_speed": 4.0},
+                "stanley_controller": {"k_stanley": 1.2, "target_speed": 3.0},
+            }
+        }
+        planner = PlannerConfig.from_yaml(source)
+        controller = ControllerConfig.from_yaml(source)
+        stanley = StanleyControllerConfig.from_yaml(source)
+        self.assertAlmostEqual(planner.horizon_m, 50.0)
+        self.assertAlmostEqual(planner.safety_margin, 0.5)
+        # Untouched field keeps dataclass default.
+        self.assertAlmostEqual(planner.center_weight, 1.0)
+        self.assertAlmostEqual(controller.target_speed, 4.0)
+        # Stanley inherits + overrides.
+        self.assertAlmostEqual(stanley.target_speed, 3.0)
+        self.assertAlmostEqual(stanley.k_stanley, 1.2)
+        # Untouched Stanley field keeps its default.
+        self.assertAlmostEqual(stanley.kd_heading, 0.3)
+
+    def test_from_yaml_missing_file_falls_back_silently(self):
+        # File does not exist: must return defaults, not raise.
+        planner = PlannerConfig.from_yaml("/nonexistent/path/params.yaml")
+        self.assertAlmostEqual(planner.horizon_m, 30.0)
+        self.assertAlmostEqual(planner.safety_margin, 0.25)
+        controller = ControllerConfig.from_yaml("/nonexistent/path/params.yaml")
+        self.assertAlmostEqual(controller.target_speed, 2.5)
+        stanley = StanleyControllerConfig.from_yaml("/nonexistent/path/params.yaml")
+        self.assertAlmostEqual(stanley.k_stanley, 0.8)
+        self.assertTrue(stanley.adaptive_steering)
+
+    def test_from_yaml_overrides_take_precedence(self):
+        source = {
+            "algorithm_defaults": {
+                "planner": {"horizon_m": 50.0},
+            }
+        }
+        # Override beats yaml; untouched yaml field passes through.
+        planner = PlannerConfig.from_yaml(source, horizon_m=80.0, clearance_weight=15.0)
+        self.assertAlmostEqual(planner.horizon_m, 80.0)
+        self.assertAlmostEqual(planner.clearance_weight, 15.0)
+
+    def test_load_algorithm_defaults_with_real_yaml_file(self):
+        yaml_text = (
+            "# comment line\n"
+            "algorithm_defaults:\n"
+            "  planner:\n"
+            "    horizon_m: 42.0\n"
+            "    safety_margin: 0.33\n"
+            "  controller:\n"
+            "    target_speed: 3.7\n"
+            "  stanley_controller:\n"
+            "    k_stanley: 1.1\n"
+            "    adaptive_steering: false\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".yaml", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(yaml_text)
+            path = handle.name
+        try:
+            defaults = load_algorithm_defaults(path)
+            self.assertAlmostEqual(defaults["planner"]["horizon_m"], 42.0)
+            self.assertAlmostEqual(defaults["planner"]["safety_margin"], 0.33)
+            self.assertAlmostEqual(defaults["controller"]["target_speed"], 3.7)
+            self.assertAlmostEqual(defaults["stanley_controller"]["k_stanley"], 1.1)
+            self.assertFalse(defaults["stanley_controller"]["adaptive_steering"])
+        finally:
+            os.unlink(path)
 
 
 if __name__ == "__main__":
