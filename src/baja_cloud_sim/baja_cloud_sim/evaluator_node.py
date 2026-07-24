@@ -12,6 +12,7 @@ import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
 from nav_msgs.msg import Odometry, Path as PathMessage
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Float32, String
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -48,7 +49,8 @@ class EvaluatorNode(Node):
         self.actual_path.header.frame_id = "map"
         self.started = self.get_clock().now()
 
-        self.path_pub = self.create_publisher(PathMessage, "/actual_path", 10)
+        path_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+        self.path_pub = self.create_publisher(PathMessage, "/actual_path", path_qos)
         self.marker_pub = self.create_publisher(MarkerArray, "/simulation/metrics", 10)
         self.create_subscription(Odometry, "/ground_truth/odom", self._odom_callback, 20)
         self.create_subscription(PathMessage, "/planned_path", self._path_callback, 10)
@@ -105,10 +107,10 @@ class EvaluatorNode(Node):
         self._csv_handle.flush()
 
         pose = self._pose_stamped()
-        self.actual_path.header.stamp = pose.header.stamp
+        self.actual_path.header.stamp = self.get_clock().now().to_msg()
         self.actual_path.poses.append(pose)
-        if len(self.actual_path.poses) > 3000:
-            self.actual_path.poses = self.actual_path.poses[-2500:]
+        if len(self.actual_path.poses) > 1500:
+            self.actual_path.poses = self.actual_path.poses[-1200:]
         self.path_pub.publish(self.actual_path)
         self._publish_metrics(tracking_error, center_error, minimum_clearance, progress)
 
