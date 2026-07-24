@@ -139,6 +139,14 @@ video_recorder_node.py    video_recorder：录制 Gazebo 追踪相机视频
 `planned_path_<timestamp>.csv`（列：`timestamp_s, x, y, yaw, seq`）。**写失败不致命**，
 仅 warn，绝不阻塞发布。
 
+**运行时调参（v1.1-yaml-spec-test 起）**：节点参数在 `params.yaml` 中显式声明后，
+可通过 `ros2 param set` 在仿真运行中切换，无需重启：
+
+- `ros2 param set /truth_perception_node enable_obstacles false`：
+  `/obstacle_markers` 改为发布空 `MarkerArray`，`frenet_planner` 收到后自然清空障碍
+  状态，相当于"无障碍物"世界。可随时切回 `true` 恢复。
+- 后续节点开关按同样模式加：`enable_<feature>` 默认 `true`，关闭时退化为最简行为。
+
 ## 已知问题：Frenet 规划器的时间戳与时间同步
 
 `frenet_planner_node.py` 目前对各传感器话题采用"最新值快照"策略，回调里完全没有使用消息头

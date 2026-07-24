@@ -35,6 +35,12 @@ class TruthPerceptionNode(Node):
         self.declare_parameter("localization_position_stddev_m", 0.015)
         self.declare_parameter("localization_altitude_stddev_m", 0.020)
         self.declare_parameter("localization_yaw_stddev_deg", 0.12)
+        # v1.1-yaml-spec-test: runtime-tunable switch. When False, the
+        # /obstacle_markers topic publishes an empty MarkerArray so that
+        # subscribers (e.g. frenet_planner) treat the world as obstacle-free.
+        # Toggle at runtime via:
+        #   ros2 param set /truth_perception_node enable_obstacles false
+        self.declare_parameter("enable_obstacles", True)
         scenario_file = self.get_parameter("scenario_file").get_parameter_value().string_value
         if not scenario_file:
             raise RuntimeError("scenario_file parameter is required")
@@ -199,31 +205,34 @@ class TruthPerceptionNode(Node):
         self.boundary_pub.publish(boundary_array)
 
         obstacle_array = MarkerArray()
-        for obstacle in self.scenario["obstacles"]:
-            local = world_to_base((obstacle["x"], obstacle["y"]), (self.pose.x, self.pose.y), self.yaw)
-            if not (-self.backward <= local[0] <= self.forward and abs(local[1]) <= 12.0):
-                continue
-            marker = Marker()
-            marker.header.frame_id = "base_link"
-            marker.header.stamp = now
-            marker.ns = "truth_obstacles"
-            marker.id = int(obstacle["id"])
-            marker.type = Marker.CUBE
-            marker.action = Marker.ADD
-            marker.pose.position.x = local[0]
-            marker.pose.position.y = local[1]
-            marker.pose.position.z = obstacle["height"] * 0.5
-            relative_yaw = wrap_angle(obstacle["yaw"] - self.yaw)
-            _, _, marker.pose.orientation.z, marker.pose.orientation.w = yaw_to_quaternion(relative_yaw)
-            marker.scale.x = obstacle["length"]
-            marker.scale.y = obstacle["width"]
-            marker.scale.z = obstacle["height"]
-            marker.color.r = 1.0
-            marker.color.g = 0.18
-            marker.color.b = 0.08
-            marker.color.a = 0.72
-            marker.lifetime.nanosec = 180_000_000
-            obstacle_array.markers.append(marker)
+        if bool(self.get_parameter("enable_obstacles").value):
+            for obstacle in self.scenario["obstacles"]:
+                local = world_to_base((obstacle["x"], obstacle["y"]), (self.pose.x, self.pose.y), self.yaw)
+                if not (-self.backward <= local[0] <= self.forward and abs(local[1]) <= 12.0):
+                    continue
+                marker = Marker()
+                marker.header.frame_id = "base_link"
+                marker.header.stamp = now
+                marker.ns = "truth_obstacles"
+                marker.id = int(obstacle["id"])
+                marker.type = Marker.CUBE
+                marker.action = Marker.ADD
+                marker.pose.position.x = local[0]
+                marker.pose.position.y = local[1]
+                marker.pose.position.z = obstacle["height"] * 0.5
+                relative_yaw = wrap_angle(obstacle["yaw"] - self.yaw)
+                _, _, marker.pose.orientation.z, marker.pose.orientation.w = yaw_to_quaternion(relative_yaw)
+                marker.scale.x = obstacle["length"]
+                marker.scale.y = obstacle["width"]
+                marker.scale.z = obstacle["height"]
+                marker.color.r = 1.0
+                marker.color.g = 0.18
+                marker.color.b = 0.08
+                marker.color.a = 0.72
+                marker.lifetime.nanosec = 180_000_000
+                obstacle_array.markers.append(marker)
+        # Always publish — empty MarkerArray when disabled, so subscribers
+        # (frenet_planner) clear stale obstacle state.
         self.obstacle_pub.publish(obstacle_array)
 
 

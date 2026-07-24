@@ -6,6 +6,11 @@ truth_perception_node:
     localization_position_stddev_m: 0.015
     localization_altitude_stddev_m: 0.020
     localization_yaw_stddev_deg: 0.12
+    # v1.1-yaml-spec-test: runtime-tunable switch.
+    # ros2 param set /truth_perception_node enable_obstacles false
+    # makes the /obstacle_markers topic publish an empty MarkerArray,
+    # simulating obstacle-free world without restarting the simulation.
+    enable_obstacles: true
 
 frenet_planner_node:
   ros__parameters:
