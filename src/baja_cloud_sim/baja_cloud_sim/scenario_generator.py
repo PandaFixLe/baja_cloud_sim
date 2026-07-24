@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
@@ -76,6 +77,174 @@ def _write_obj(path: Path, road_surface: Sequence[Dict[str, float]], seed: int) 
                 handle.write(f"f {b}//{b} {c}//{c} {d}//{d}\n")
 
 
+def _terrain_features(s: float, lateral: float, seed: int) -> float:
+    """Return additional Z offset for terrain: trench potholes + hill."""
+    z_extra = 0.0
+    rng = random.Random(seed + 777)
+
+    # ---- Section 2: 坑洼带  s = 30–55 m ----
+    # Lowered base level with cos-profile dips in the gaps between ridges
+    if 30.0 <= s <= 55.0:
+        z_extra -= 0.12  # base drop matching ground_s2
+        # Gaps between ridges (the actual "potholes")
+        ridge_centers = [30.5, 34.5, 38.5, 43.0, 47.5, 51.5]
+        gap_zones = [
+            (32.0, 1.8),   # (s_center, half_length)
+            (36.0, 2.0),
+            (40.5, 2.2),
+            (45.0, 2.5),
+            (49.5, 2.0),
+        ]
+        for gs, g_half in gap_zones:
+            ds_gap = (s - gs) / g_half
+            if abs(ds_gap) < 1.0:
+                # Smooth depression: cos profile (inverted hill shape)
+                z_extra -= 0.10 * math.cos(math.pi * 0.5 * abs(ds_gap))
+
+    # ---- Section 3: 小土坡  s = 60–72 m, 8°, cos profile ----
+    if 60.0 <= s <= 72.0:
+        hill_len = 12.0
+        hill_height = hill_len * math.tan(math.radians(8.0))
+        phase = (s - 60.0) / hill_len
+        z_extra += hill_height * (1.0 - math.cos(math.pi * phase)) * 0.5
+
+    return z_extra
+
+
+def _nearest_center_index(
+    centerline: Sequence[Dict[str, float]], s_target: float
+) -> int:
+    """Return the centerline index closest to *s_target*."""
+    return min(
+        range(len(centerline)),
+        key=lambda i: abs(centerline[i]["s"] - s_target),
+    )
+
+
+def _add_obstacle(
+    obstacles: list,
+    ref: Dict[str, float],
+    lateral: float,
+    yaw_offset: float,
+    length: float,
+    width: float,
+    height: float,
+) -> None:
+    """Append one obstacle to the list at a Frenet position relative to *ref*."""
+    x = ref["x"] - math.sin(ref["yaw"]) * lateral
+    y = ref["y"] + math.cos(ref["yaw"]) * lateral
+    obs_id = max((o.get("id", 0) for o in obstacles), default=-1) + 1
+    obstacles.append({
+        "id": obs_id,
+        "x": x,
+        "y": y,
+        "z": 0.45,
+        "yaw": ref["yaw"] + yaw_offset,
+        "length": length,
+        "width": width,
+        "height": height,
+    })
+
+
+def _segmented_ground_sdf(centerline: Sequence[Dict[str, float]]) -> str:
+    """Generate segmented collision ground: flat → pothole trench → hill.
+
+    A thin safety-net base_ground sits at z=-0.40 to prevent the vehicle
+    from falling through any gaps between segments.
+    """
+    rng = random.Random(42)
+    FRIC = ('<ode><mu>0.78</mu><mu2>0.72</mu2>'
+            '<slip1>0.015</slip1><slip2>0.025</slip2></ode>')
+    CONTACT = ('<ode><kp>600000</kp><kd>180</kd>'
+               '<max_vel>0.1</max_vel><min_depth>0.001</min_depth></ode>')
+    SURF = f'<surface><friction>{FRIC}</friction><contact>{CONTACT}</contact></surface>'
+
+    def _cl(s_val: float) -> Dict[str, float]:
+        return min(centerline, key=lambda p: abs(p["s"] - s_val))
+
+    def _box(name: str, s_mid: float, length: float, z_center: float,
+             yaw: float, width: float = 7.0) -> str:
+        ref = _cl(s_mid)
+        return (
+            f'<model name="{name}"><static>true</static>\n'
+            f'      <pose>{ref["x"]:.5f} {ref["y"]:.5f} {z_center:.5f} 0 0 {yaw:.5f}</pose>\n'
+            f'      <link name="body"><collision name="collision">\n'
+            f'      <geometry><box><size>{length:.2f} {width:.1f} 0.2</size></box></geometry>\n'
+            f'      {SURF}</collision></link></model>'
+        )
+
+    parts: List[str] = []
+
+    # ---- Safety net: thin, low base ground ----
+    parts.append(
+        '<model name="base_ground"><static>true</static>'
+        '<pose>50 0 -0.55 0 0 0</pose>'
+        '<link name="body"><collision name="collision">'
+        '<geometry><box><size>130 40 0.05</size></box></geometry>'
+        f'{SURF}</collision></link></model>'
+    )
+
+    # ---- Start pad: wide flat box at s=0 to catch the vehicle ----
+    parts.append(
+        '<model name="start_pad"><static>true</static>'
+        '<pose>1.5 0 -0.10 0 0 0</pose>'
+        '<link name="body"><collision name="collision">'
+        '<geometry><box><size>5 7 0.2</size></box></geometry>'
+        f'{SURF}</collision></link></model>'
+    )
+    # ---- Section 1: Flat (s=2-30), follows road curve ----
+    s1y = _cl(15.0)["yaw"]
+    parts.append(_box("ground_s1", 15.0, 30, -0.10, s1y, width=9.0))
+
+    # ---- Section 2: 坑洼带 (s=30-55) ----
+    # Strategy: ONE lowered ground strip plus raised "ridges" on top.
+    # The vehicle rides on the ridges and drops into the lowered gaps.
+    hill_len = 12.0
+    hill_height = hill_len * math.tan(math.radians(8.0))
+    # Lowered continuous ground (z-top ≈ -0.12, same as flat zone top=0.0 minus 0.12)
+    s2y = _cl(42.5)["yaw"]
+    parts.append(_box("ground_s2", 42.5, 27, -0.22, s2y))
+
+    # 5 raised ridge strips ON TOP of the lowered zone (same height as flat zone)
+    ridge_specs = [
+        (30.5, 1.5), (34.5, 1.5), (38.5, 1.5),
+        (43.0, 2.0), (47.5, 2.0), (51.5, 1.5),
+    ]
+    for i, (s_mid, r_len) in enumerate(ridge_specs):
+        ref = _cl(s_mid)
+        parts.append(
+            f'<model name="ridge_{i}"><static>true</static>\n'
+            f'      <pose>{ref["x"]:.5f} {ref["y"]:.5f} -0.10 0 0 {ref["yaw"]:.5f}</pose>\n'
+            f'      <link name="body"><collision name="collision">\n'
+            f'      <geometry><box><size>{r_len:.2f} 2.5 0.15</size></box></geometry>\n'
+            f'      <surface><friction><ode><mu>0.78</mu><mu2>0.72</mu2></ode></friction></surface>'
+            f'</collision></link></model>'
+        )
+
+    # ---- Transition flat (s=55-60) ----
+    s2by = _cl(57.5)["yaw"]
+    parts.append(_box("ground_s2b", 57.5, 6, -0.10, s2by))
+
+    # ---- Section 3: Hill ramp (s=60-72, 8°, cos profile) ----
+    slope_rad = math.atan2(math.tan(math.radians(8.0)) * hill_len * 0.5, hill_len * 0.5)
+    hx = (_cl(60.0)["x"] + _cl(72.0)["x"]) * 0.5
+    hy = (_cl(60.0)["y"] + _cl(72.0)["y"]) * 0.5
+    hyaw = _cl(66.0)["yaw"]
+    parts.append(
+        f'<model name="hill_ramp"><static>true</static>\n'
+        f'      <pose>{hx:.5f} {hy:.5f} {hill_height * 0.25:.5f} 0 {slope_rad:.5f} {hyaw:.5f}</pose>\n'
+        f'      <link name="body"><collision name="collision">\n'
+        f'      <geometry><box><size>{hill_len:.2f} 7 {hill_height * 0.5:.4f}</size></box></geometry>\n'
+        f'      {SURF}</collision></link></model>'
+    )
+
+    # ---- Flat after hill (s=72-100), at hill-top height ----
+    s4y = _cl(86.0)["yaw"]
+    parts.append(_box("ground_s4", 86.0, 29, hill_height - 0.10, s4y))
+
+    return "\n".join(parts)
+
+
 def _obstacle_sdf(obstacle: Dict[str, float]) -> str:
     return f"""
     <model name="obstacle_{obstacle['id']}">
@@ -112,8 +281,10 @@ def generate(
             obstacles = json.load(handle)
         for idx, obs in enumerate(obstacles):
             obs.setdefault("id", idx)
-            # Re-anchor z on terrain if a base centerline can be found by s
-            obs.setdefault("z", 0.45)
+            # Re-anchor z to the terrain profile using the obstacle's `s`.
+            s_value = obs.get("s")
+            ref = next((p for p in centerline if abs(p["s"] - s_value) < 0.5), None) if s_value is not None else None
+            obs["z"] = (ref["z"] + obs["height"] * 0.5 + 0.03) if ref is not None else obs.get("z", 0.45)
     else:
         obstacles = generate_obstacles(centerline, seed, obstacle_count)
 
@@ -168,16 +339,8 @@ def generate(
     vehicle_uri = (package_share / "models" / "baja_vehicle").as_uri()
     road_uri = mesh_path.resolve().as_uri()
     obstacle_models = "\n".join(_obstacle_sdf(obstacle) for obstacle in obstacles)
+    segmented_ground = _segmented_ground_sdf(centerline)
     start = centerline[0]
-    minimum_x = min(point["x"] for point in road_surface) - 15.0
-    maximum_x = max(point["x"] for point in road_surface) + 15.0
-    minimum_y = min(point["y"] for point in road_surface) - 15.0
-    maximum_y = max(point["y"] for point in road_surface) + 15.0
-    ground_x = 0.5 * (minimum_x + maximum_x)
-    ground_y = 0.5 * (minimum_y + maximum_y)
-    ground_size_x = maximum_x - minimum_x
-    ground_size_y = maximum_y - minimum_y
-    ground_z = min(point["z"] for point in road_surface) - 0.24
     world = f"""<?xml version="1.0"?>
 <sdf version="1.9">
   <world name="baja_track">
@@ -194,7 +357,7 @@ def generate(
     </plugin>
     <scene><ambient>0.55 0.55 0.55 1</ambient><background>0.67 0.80 0.90 1</background><shadows>true</shadows></scene>
     <light name="sun" type="directional"><cast_shadows>true</cast_shadows><pose>0 0 20 0 0 0</pose><diffuse>0.9 0.86 0.75 1</diffuse><specular>0.2 0.2 0.2 1</specular><direction>-0.4 0.2 -0.9</direction></light>
-    <model name="base_ground"><static>true</static><pose>{ground_x:.4f} {ground_y:.4f} {ground_z:.4f} 0 0 0</pose><link name="ground"><collision name="collision"><geometry><box><size>{ground_size_x:.4f} {ground_size_y:.4f} 0.2</size></box></geometry><surface><friction><ode><mu>1.1</mu><mu2>1.0</mu2></ode></friction></surface></collision><visual name="visual"><geometry><box><size>{ground_size_x:.4f} {ground_size_y:.4f} 0.2</size></box></geometry><material><ambient>0.16 0.25 0.12 1</ambient><diffuse>0.23 0.34 0.16 1</diffuse><pbr><metal><roughness>1.0</roughness><metalness>0.0</metalness></metal></pbr></material></visual></link></model>
+    {segmented_ground}
     <model name="dirt_road"><static>true</static><link name="road"><collision name="collision"><geometry><mesh><uri>{road_uri}</uri></mesh></geometry><surface><friction><ode><mu>1.25</mu><mu2>1.0</mu2></ode></friction><contact><ode><kp>800000</kp><kd>220</kd><max_vel>0.08</max_vel><min_depth>0.0005</min_depth></ode></contact></surface></collision><visual name="visual"><geometry><mesh><uri>{road_uri}</uri></mesh></geometry><material><ambient>0.30 0.20 0.11 1</ambient><diffuse>0.46 0.31 0.17 1</diffuse><pbr><metal><roughness>1.0</roughness><metalness>0.0</metalness></metal></pbr></material></visual></link></model>
     {obstacle_models}
     <include><uri>{vehicle_uri}</uri><name>baja_vehicle</name><pose>{start['x']:.5f} {start['y']:.5f} {start['z'] + 0.52:.5f} 0 0 {start['yaw']:.5f}</pose></include>
