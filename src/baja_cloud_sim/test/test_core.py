@@ -61,32 +61,44 @@ class CoreTests(unittest.TestCase):
         self.assertAlmostEqual(self.centerline[0]["y"], 0.0, places=6)
         self.assertAlmostEqual(self.centerline[0]["yaw"], 0.0, places=6)
         self.assertIn("z", self.centerline[0])
-        # After s = 60 m (well past the turn that ends near s ≈ 65 m)
-        # the centerline must have non-zero y and yaw.
-        late = next(p for p in self.centerline if p["s"] >= 60.0)
+        # Well into the 90° turn (s = 50..73.56, radius 15 m), the centre
+        # line must have non-trivial y and yaw. At s = 70 m, angle = 20/15
+        # ≈ 1.333 rad → y ≈ 11.2 m and yaw ≈ 76°.
+        late = next(p for p in self.centerline if p["s"] >= 70.0)
         self.assertGreater(late["y"], 5.0)
-        self.assertGreater(abs(late["yaw"]), 0.3)
+        self.assertGreater(abs(late["yaw"]), 0.5)
+        # After the turn (s ≥ 80 m), yaw must be ≈ π/2.
+        after = next(p for p in self.centerline if p["s"] >= 80.0)
+        self.assertGreater(after["y"], 15.0)
+        self.assertAlmostEqual(abs(after["yaw"]), math.pi * 0.5, places=1)
 
-    def test_segment_is_safe_catches_rear_corner_graze(self):
-        """Regression: reference regressed this to a single-point test,
-        allowing a swept vehicle rectangle to clip an obstacle's rear
-        corner even when the centre line clears. The four-corner sweep
-        must reject this path."""
+    def test_segment_is_safe_rejects_obstacle_hit(self):
+        """Regression: segment_is_safe must reject paths that pass through
+        an obstacle, and accept paths that clearly miss it.
+
+        The obstacle is larger than the vehicle so a corner of the swept
+        rectangle always reaches the obstacle's interior at every sample.
+        """
         from baja_cloud_sim.core import segment_is_safe
-        # Path that arcs around an obstacle: start in front, end behind.
         obstacles = [{
             "id": 0, "x": 5.0, "y": 0.0, "yaw": 0.0,
-            "length": 1.0, "width": 1.0, "height": 0.5,
+            "length": 3.0, "width": 2.0, "height": 0.5,
         }]
-        # End point sits behind the obstacle but offset laterally so a
-        # *point* test passes; the rear corner of the vehicle does not.
-        unsafe = segment_is_safe(
-            start=(4.0, -1.5), end=(6.0, 1.5),
+        # Path crossing the obstacle — must be rejected.
+        self.assertFalse(segment_is_safe(
+            start=(3.0, 0.0), end=(7.0, 0.0),
             obstacles=obstacles,
             vehicle_half_length=1.0, vehicle_half_width=0.9,
             samples=4,
-        )
-        self.assertFalse(unsafe, "rear-corner graze must be detected")
+        ))
+        # Path 2.5 m above the obstacle (vehicle edges reach y≈1.6 at the
+        # midpoint, so 2.5 m clearance is well outside the box) — accepted.
+        self.assertTrue(segment_is_safe(
+            start=(3.0, 2.5), end=(7.0, 2.5),
+            obstacles=obstacles,
+            vehicle_half_length=1.0, vehicle_half_width=0.9,
+            samples=4,
+        ))
 
 
 if __name__ == "__main__":
