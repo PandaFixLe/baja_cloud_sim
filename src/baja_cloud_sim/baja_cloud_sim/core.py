@@ -749,6 +749,17 @@ def stanley_path_control(
     raw_speed = cfg.target_speed * speed_factor
     state.prev_speed += cfg.speed_alpha * (raw_speed - state.prev_speed)
 
+    # Heading-alignment speed gate: prevent acceleration when the steering
+    # wheel has straightened but the vehicle body is still rotating.
+    # Only triggers when steering is small (< 8°) AND heading error is
+    # still large (> 7°), i.e. the classic "exiting a turn" transition.
+    # During normal curve driving both values are large so the gate
+    # stays open.
+    if abs(heading_error) > 0.12 and steering_deg < 8.0:
+        state.prev_speed = min(state.prev_speed, cfg.target_speed * 0.50)
+    elif abs(heading_error) > 0.08 and steering_deg < 6.0:
+        state.prev_speed = min(state.prev_speed, cfg.target_speed * 0.70)
+
     return {
         "speed": state.prev_speed,
         "steering": steering,
