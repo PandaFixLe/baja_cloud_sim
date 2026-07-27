@@ -52,7 +52,7 @@ class PathFollowerNode(Node):
             ("wheelbase", 1.43),
             ("lqr_q_cte", 10.0),
             ("lqr_q_cte_dot", 1.0),
-            ("lqr_q_heading", 3.0),
+            ("lqr_q_heading", 5.0),
             ("lqr_q_yaw_rate", 0.5),
             ("lqr_r_steer", 10.0),
             ("lqr_fb_limit_deg", 3.0),
@@ -359,7 +359,7 @@ class PathFollowerNode(Node):
             yaw_rate=state.yaw_rate_filtered,
         )
         _, _, _, δ_fb = self.lqr_ctrl.compute(table, vehicle, cfg.target_speed)
-        δ_fb = clamp(δ_fb, -math.radians(3.0), math.radians(3.0))
+        δ_fb = clamp(δ_fb, -math.radians(5.0), math.radians(5.0))
         δ_cmd = ref.steering_ff + δ_fb
 
         # --- rate-limit + lowpass on steering ---
