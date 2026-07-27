@@ -26,7 +26,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
     ] + data_files("launch") + data_files("config") + data_files("models") + data_files("urdf"),
-    install_requires=["setuptools"],
+    install_requires=["setuptools", "numpy", "scipy"],
     zip_safe=True,
     maintainer="Baja Autonomous Team",
     maintainer_email="team@example.com",

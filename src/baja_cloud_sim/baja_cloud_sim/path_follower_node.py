@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import Optional
 
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -18,7 +19,10 @@ from .core import (
     StanleyState,
     legacy_path_control,
     stanley_path_control,
+    lqr_path_control,
 )
+from .trajectory_smoother import TrajectorySmoother, TrajectoryTable
+from .lqr_controller import LQRController, LQRConfig
 
 
 class PathFollowerNode(Node):
@@ -51,13 +55,13 @@ class PathFollowerNode(Node):
         # Note: v1.0 path_follower_node already consumes online /planned_path;
         # no CSV-loading, 4WS, or virtual_target state-machine remains here.
         mode = str(self.get_parameter("controller_mode").value).strip().lower()
-        if mode not in ("legacy", "stanley"):
+        if mode not in ("legacy", "stanley", "lqr"):
             self.get_logger().warning(
                 f"Unknown controller_mode '{mode}', falling back to 'stanley'"
             )
             mode = "stanley"
         self.controller_mode = mode
-        if mode == "stanley":
+        if mode in ("stanley", "lqr"):
             self.stanley_config = StanleyControllerConfig(
                 target_speed=self.config.target_speed,
                 lookahead_distance=self.config.lookahead_distance,
@@ -84,6 +88,20 @@ class PathFollowerNode(Node):
 
         self.command_pub = self.create_publisher(AckermannDriveStamped, "/cmd_control", 10)
         self.lookahead_pub = self.create_publisher(PointStamped, "/lookahead_point", 10)
+
+        # LQR + Bézier trajectory smoother (used when controller_mode == "lqr")
+        self.trajectory_table: Optional[TrajectoryTable] = None
+        self.lqr_ctrl: Optional[LQRController] = None
+        if mode == "lqr":
+            self.smoother = TrajectorySmoother(wheelbase=1.43)
+            self.smoothed_pub = self.create_publisher(PathMessage, "/smoothed_path", 10)
+            self.get_logger().info(
+                "path_follower: mode=lqr (Bézier feed-forward + LQR feedback)"
+            )
+        else:
+            self.smoother = None
+            self.smoothed_pub = None
+
         self.create_subscription(NavSatFix, "/gps/fix", self._gps_callback, 20)
         self.create_subscription(Float32, "/imu/yaw", self._yaw_callback, 20)
         self.create_subscription(PathMessage, "/planned_path", self._path_callback, 10)
@@ -110,8 +128,46 @@ class PathFollowerNode(Node):
         self.path = [(pose.pose.position.x, pose.pose.position.y) for pose in message.poses]
         self.last_path_time = self.get_clock().now()
 
+        # LQR mode: regenerate trajectory table on each new path
+        if self.controller_mode == "lqr" and self.smoother is not None:
+            target_speed = float(self.get_parameter("target_speed").value)
+            self.trajectory_table = self.smoother.generate(
+                self.path, target_speed=target_speed,
+            )
+            if self.lqr_ctrl is None and self.trajectory_table is not None:
+                self.lqr_ctrl = LQRController(LQRConfig())
+            elif self.trajectory_table is None:
+                self.get_logger().warn(
+                    "Trajectory smoother returned None, falling back to Stanley",
+                    throttle_duration_sec=2.0,
+                )
+            # Publish smoothed path for RViz visualisation
+            if self.smoothed_pub is not None and self.trajectory_table is not None:
+                self._publish_smoothed_path()
+
     def _status_callback(self, message: String) -> None:
         self.planner_feasible = message.data == "FEASIBLE"
+
+    def _publish_smoothed_path(self) -> None:
+        """Publish the Bézier-smoothed trajectory as a nav_msgs/Path for RViz."""
+        if self.trajectory_table is None or self.smoothed_pub is None:
+            return
+        msg = PathMessage()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "map"
+        from geometry_msgs.msg import PoseStamped
+        for pt in self.trajectory_table.points:
+            ps = PoseStamped()
+            ps.header = msg.header
+            ps.pose.position.x = pt.x
+            ps.pose.position.y = pt.y
+            ps.pose.position.z = 0.12
+            # Encode yaw in orientation quaternion
+            half_yaw = pt.yaw * 0.5
+            ps.pose.orientation.z = math.sin(half_yaw)
+            ps.pose.orientation.w = math.cos(half_yaw)
+            msg.poses.append(ps)
+        self.smoothed_pub.publish(msg)
 
     def _publish_stop(self) -> None:
         message = AckermannDriveStamped()
@@ -131,6 +187,17 @@ class PathFollowerNode(Node):
 
         if self.controller_mode == "legacy":
             command = legacy_path_control(self.position, self.yaw_navigation, self.path, self.config)
+            speed = float(command["speed"])
+            steering = float(command["steering"])
+            target_x, target_y = float(command["target_x"]), float(command["target_y"])
+        elif self.controller_mode == "lqr":
+            command = lqr_path_control(
+                self.position, self.yaw_navigation, self.path,
+                self.stanley_config, self.stanley_state, dt=0.05,
+                trajectory_table=self.trajectory_table,
+                lqr_ctrl=self.lqr_ctrl,
+            )
+            self.stanley_state = command["state"]
             speed = float(command["speed"])
             steering = float(command["steering"])
             target_x, target_y = float(command["target_x"]), float(command["target_y"])

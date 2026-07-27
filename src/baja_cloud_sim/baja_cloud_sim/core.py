@@ -759,3 +759,150 @@ def stanley_path_control(
         "preview_curvature": preview_curv,
         "state": state,
     }
+
+
+# ---------------------------------------------------------------------------
+# LQR + Bézier feed-forward path control
+# ---------------------------------------------------------------------------
+
+def lqr_path_control(
+    current: Point,
+    yaw_navigation: float,
+    path: Sequence[Point],
+    config: Optional[StanleyControllerConfig] = None,
+    state: Optional[StanleyState] = None,
+    dt: float = 0.05,
+    # --- LQR-specific extras (duck-typed, caller owns the objects) ---
+    trajectory_table: object = None,
+    lqr_ctrl: object = None,
+) -> Dict[str, object]:
+    """LQR feedback + Bézier-curvature feed-forward path controller.
+
+    Drops the Stanley heading PD + CTE term.  Instead:
+      • feed-forward δ_ff from the pre-computed Bézier trajectory table
+      • feedback  δ_fb = −K·x  (LQR gain-scheduled on speed)
+
+    Falls back to ``stanley_path_control`` when the trajectory table is
+    missing or the LQR controller object is unavailable.
+
+    Accepts the same ``(current, yaw, path, config, state, dt)`` signature
+    as ``stanley_path_control`` so the node can swap controllers with a
+    single branch.
+    """
+    # ---- fallback -----------------------------------------------------------------
+    if trajectory_table is None or lqr_ctrl is None or not trajectory_table:
+        return stanley_path_control(current, yaw_navigation, path, config, state, dt)
+
+    cfg = config or StanleyControllerConfig()
+    if state is None:
+        state = StanleyState()
+
+    if len(path) < 2:
+        return {
+            "speed": 0.0,
+            "steering": 0.0,
+            "target_x": current[0],
+            "target_y": current[1],
+            "heading_error": 0.0,
+            "cte": 0.0,
+            "preview_curvature": 0.0,
+            "state": state,
+        }
+
+    # ---- helpers (same as Stanley path) -------------------------------------------
+    augmented = augment_path_for_cte(path)
+    yaw_math = math.pi * 0.5 - yaw_navigation
+
+    nearest = nearest_index(
+        [(p["x"], p["y"]) for p in augmented],
+        current,
+        hint=getattr(state, "last_nearest", 0),
+    )
+    state.last_nearest = max(0, nearest - 4)
+
+    cte = signed_lateral(current, augmented[nearest])
+    heading_error = _compute_heading_error_to_target(
+        current, yaw_navigation, augmented, nearest, cfg.lookahead_distance,
+    )
+
+    if not state.initialized:
+        state.prev_heading_error = heading_error
+        state.prev_steering = 0.0
+        state.prev_yaw = yaw_math
+        state.prev_cte = cte
+        state.yaw_rate_filtered = 0.0
+        state.prev_speed = cfg.target_speed
+        state.initialized = True
+
+    # Yaw-rate estimate (filtered)
+    yaw_rate_raw = wrap_angle(yaw_math - state.prev_yaw) / max(dt, 1e-3)
+    state.yaw_rate_filtered = (
+        cfg.yaw_rate_alpha * state.yaw_rate_filtered
+        + (1.0 - cfg.yaw_rate_alpha) * yaw_rate_raw
+    )
+
+    # Preview curvature (for logging)
+    pc_lookahead = max(3.0, cfg.target_speed * 1.2)
+    preview_curv = preview_curvature(augmented, nearest, pc_lookahead)
+
+    # ---- build vehicle state for LQR ----------------------------------------------
+    # Import here so core.py stays stdlib-compatible when LQR is unused
+    from .lqr_controller import VehicleState  # type: ignore[import-untyped]
+
+    vehicle = VehicleState(
+        speed=max(state.prev_speed, 0.5),
+        cte=cte,
+        heading_error=heading_error,
+        yaw_rate=state.yaw_rate_filtered,
+    )
+
+    # ---- LQR compute --------------------------------------------------------------
+    v_cmd, delta_raw, delta_ff, delta_fb = lqr_ctrl.compute(
+        trajectory_table, vehicle, target_speed=cfg.target_speed,
+    )
+
+    # ---- steering post-processing (same pipeline as Stanley) ----------------------
+    max_steer = math.radians(cfg.max_steering_deg)
+    delta_clamped = clamp(delta_raw, -max_steer, max_steer)
+
+    filtered = (
+        cfg.steering_alpha * delta_clamped
+        + (1.0 - cfg.steering_alpha) * state.prev_steering
+    )
+
+    rate_rad = math.radians(cfg.max_steer_rate_deg)
+    delta_step = clamp(filtered - state.prev_steering, -rate_rad * dt, rate_rad * dt)
+    steering = state.prev_steering + delta_step
+
+    # ---- speed post-processing (low-pass, same as Stanley) ------------------------
+    if cfg.adaptive_speed:
+        raw_speed = v_cmd
+    else:
+        raw_speed = cfg.target_speed
+    state.prev_speed += cfg.speed_alpha * (raw_speed - state.prev_speed)
+
+    # ---- persist state ------------------------------------------------------------
+    state.prev_heading_error = heading_error
+    state.prev_steering = steering
+    state.prev_yaw = yaw_math
+    state.prev_cte = cte
+
+    # ---- pick a visualisation target point ----------------------------------------
+    # Use the first preview point as the "target" for RViz
+    target_pt = trajectory_table.points[0] if trajectory_table else None
+    tx = target_pt.x if target_pt else current[0]
+    ty = target_pt.y if target_pt else current[1]
+
+    return {
+        "speed": state.prev_speed,
+        "steering": steering,
+        "target_x": tx,
+        "target_y": ty,
+        "heading_error": heading_error,
+        "cte": cte,
+        "preview_curvature": preview_curv,
+        "state": state,
+        # Extra diagnostics (ignored by the node if not unpacked)
+        "delta_ff": delta_ff,
+        "delta_fb": delta_fb,
+    }
