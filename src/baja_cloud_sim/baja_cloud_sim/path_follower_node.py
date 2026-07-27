@@ -48,6 +48,14 @@ class PathFollowerNode(Node):
             ("max_steer_rate_deg", 8.0),
             ("adaptive_steering", True),
             ("adaptive_speed", True),
+            # LQR controller parameters
+            ("wheelbase", 1.43),
+            ("lqr_q_cte", 10.0),
+            ("lqr_q_cte_dot", 1.0),
+            ("lqr_q_heading", 3.0),
+            ("lqr_q_yaw_rate", 0.5),
+            ("lqr_r_steer", 10.0),
+            ("lqr_fb_limit_deg", 3.0),
         ):
             self.declare_parameter(name, default)
         self.origin_lat = float(self.get_parameter("origin_latitude").value)
@@ -101,12 +109,22 @@ class PathFollowerNode(Node):
         if mode == "lqr":
             self.smoother = TrajectorySmoother(wheelbase=1.43)
             self.smoothed_pub = self.create_publisher(PathMessage, "/smoothed_path", 10)
+            self.lqr_config = LQRConfig(
+                wheelbase=float(self.get_parameter("wheelbase").value),
+                q_cte=float(self.get_parameter("lqr_q_cte").value),
+                q_cte_dot=float(self.get_parameter("lqr_q_cte_dot").value),
+                q_heading=float(self.get_parameter("lqr_q_heading").value),
+                q_yaw_rate=float(self.get_parameter("lqr_q_yaw_rate").value),
+                r_steer=float(self.get_parameter("lqr_r_steer").value),
+                fb_limit_deg=float(self.get_parameter("lqr_fb_limit_deg").value),
+            )
             self.get_logger().info(
                 "path_follower: mode=lqr (Bézier feed-forward + LQR feedback)"
             )
         else:
             self.smoother = None
             self.smoothed_pub = None
+            self.lqr_config = None
 
         # Predicted trajectory (kinematic bicycle forward-sim in RViz)
         self.predicted_pub = self.create_publisher(PathMessage, "/predicted_trajectory", 10)
@@ -146,7 +164,7 @@ class PathFollowerNode(Node):
                 generated_at=generated_at,
             )
             if self.lqr_ctrl is None and self.trajectory_table is not None:
-                self.lqr_ctrl = LQRController(LQRConfig())
+                self.lqr_ctrl = LQRController(self.lqr_config)
             elif self.trajectory_table is None:
                 self.get_logger().warn(
                     "Trajectory smoother returned None, falling back to Stanley",
