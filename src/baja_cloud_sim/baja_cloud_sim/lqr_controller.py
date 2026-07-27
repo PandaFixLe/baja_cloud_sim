@@ -40,9 +40,9 @@ class LQRConfig:
     # ---- LQR weights (Q diagonal, R scalar) ----
     q_cte: float = 10.0          # cross-track error
     q_cte_dot: float = 1.0       # lateral speed
-    q_heading: float = 5.0       # heading error
+    q_heading: float = 3.0       # heading error
     q_yaw_rate: float = 0.5      # yaw-rate error
-    r_steer: float = 5.0         # steering effort penalty
+    r_steer: float = 10.0        # steering effort penalty
 
     # ---- Feedback clamp ----
     fb_limit_deg: float = 3.0   # cap feedback steering to ± this many degrees
