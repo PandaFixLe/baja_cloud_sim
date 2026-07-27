@@ -34,7 +34,8 @@ class FrenetPlannerNode(Node):
             ("origin_latitude", 30.0), ("origin_longitude", 114.0),
             ("horizon_m", 30.0), ("center_weight", 1.0),
             ("clearance_weight", 12.0), ("desired_clearance", 1.2),
-            ("vehicle_length", 3.0), ("vehicle_width", 1.5),
+            ("vehicle_length", 2.1), ("vehicle_width", 1.55),
+            ("safety_margin", 0.15),
             # v1.1 planner path-log side-car (fail-safe, off by default in tests)
             ("enable_path_log", True),
             ("path_log_dir", "results"),
@@ -49,6 +50,7 @@ class FrenetPlannerNode(Node):
             desired_clearance=float(self.get_parameter("desired_clearance").value),
             vehicle_length=float(self.get_parameter("vehicle_length").value),
             vehicle_width=float(self.get_parameter("vehicle_width").value),
+            safety_margin=float(self.get_parameter("safety_margin").value),
         )
         self.centerline = []
         self.position = None
