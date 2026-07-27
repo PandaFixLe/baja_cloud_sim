@@ -343,7 +343,7 @@ class PathFollowerNode(Node):
 
         # --- s-axis feedback → v_correction ±0.5 m/s ---
         k_s = 1.0
-        v_fb = clamp(-k_s * s, -0.5, 0.5)  # s>0 (ahead/overspeed) → decelerate
+        v_fb = clamp(-k_s * s, -0.3, 0.3)  # s>0 (ahead/overspeed) → decelerate
         v_cmd = clamp(ref.speed_limit + v_fb, 0.1, cfg.target_speed)
 
         # --- l-axis feedback → δ_fb ±3° ---
