@@ -667,6 +667,13 @@ def stanley_path_control(
     pc_lookahead = max(3.0, cfg.target_speed * 1.2)
     preview_curv = preview_curvature(augmented, nearest, pc_lookahead)
 
+    # Steering limiter uses a shorter lookahead so that only near-term
+    # curvature tightens the steering clamp — the full-lookahead max is
+    # still used for speed adaptation (line ~733), where anticipating
+    # far-ahead curves is desirable.
+    steer_lookahead = max(2.0, cfg.target_speed * 0.6)
+    preview_curv_steer = preview_curvature(augmented, nearest, steer_lookahead)
+
     if not state.initialized:
         state.prev_heading_error = heading_error
         state.prev_steering = 0.0
@@ -689,7 +696,7 @@ def stanley_path_control(
     stanley_term = math.atan2(cfg.k_stanley * cte, v_safe)
 
     if cfg.adaptive_steering:
-        scale = 1.0 + min(preview_curv * cfg.preview_curv_boost_scale, cfg.preview_curv_boost_limit)
+        scale = 1.0 + min(preview_curv_steer * cfg.preview_curv_boost_scale, cfg.preview_curv_boost_limit)
         max_steer = math.radians(cfg.max_steering_deg) / max(1.0, scale)
     else:
         max_steer = math.radians(cfg.max_steering_deg)
