@@ -718,19 +718,19 @@ def stanley_path_control(
     state.prev_cte = cte
 
     steering_deg = abs(math.degrees(steering))
-    if steering_deg > 30.0:
-        speed_factor = 0.50
-    elif steering_deg > 20.0:
-        speed_factor = 0.70
-    elif steering_deg > 12.0:
-        speed_factor = 0.85
-    elif steering_deg > 6.0:
-        speed_factor = 0.95
+    if steering_deg > 25.0:
+        speed_factor = 0.35
+    elif steering_deg > 15.0:
+        speed_factor = 0.55
+    elif steering_deg > 8.0:
+        speed_factor = 0.75
+    elif steering_deg > 4.0:
+        speed_factor = 0.90
     else:
         speed_factor = 1.0
 
     if cfg.adaptive_speed:
-        adaptive_scale = 1.0 / (1.0 + preview_curv * 3.0)
+        adaptive_scale = 1.0 / (1.0 + preview_curv * 6.0)
         speed_factor *= max(0.30, adaptive_scale)
 
     return {
