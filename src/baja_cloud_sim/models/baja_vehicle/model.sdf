@@ -410,11 +410,11 @@
       <steering_limit>0.610865</steering_limit>
       <steer_p_gain>18.0</steer_p_gain>
       <min_velocity>-1.0</min_velocity>
-      <max_velocity>5.0</max_velocity>
-      <min_acceleration>-4.0</min_acceleration>
-      <max_acceleration>2.4</max_acceleration>
-      <min_jerk>-8.0</min_jerk>
-      <max_jerk>6.0</max_jerk>
+      <max_velocity>6.0</max_velocity>
+      <min_acceleration>-1.5</min_acceleration>
+      <max_acceleration>1.2</max_acceleration>
+      <min_jerk>-2.0</min_jerk>
+      <max_jerk>1.5</max_jerk>
       <topic>/model/baja_vehicle/cmd_vel</topic>
       <odom_topic>/model/baja_vehicle/wheel_odometry</odom_topic>
       <tf_topic>/model/baja_vehicle/wheel_tf</tf_topic>
