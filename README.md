@@ -1,20 +1,26 @@
 # Baja 云端规划控制仿真
 
-面向 Ubuntu 22.04、ROS 2 Humble 和 Gazebo Harmonic 的规划控制闭环工程。算法节点只使用
-Python 标准库和 ROS 2 消息，不依赖 Torch、NumPy、SciPy、OpenCV。
-
-> 规划核心 Frenet 局部规划器的坐标基础、与 Apollo EM Planner 的关联、简化形式与运行时
-> 结构，详见 [`docs/frenet_planner.md`](docs/frenet_planner.md)。
+面向 Ubuntu 22.04、ROS 2 Humble 和 Gazebo Harmonic 的规划控制闭环工程。
+Frenet 规划器 (`core.py`) 仅依赖 Python 标准库；LQR 控制器需 `numpy`、`scipy`。
 
 ## 文档索引
 
 | 文档 | 用途 |
 | --- | --- |
 | [`docs/frenet_planner.md`](docs/frenet_planner.md) | Frenet 局部规划器的坐标基础、Apollo EM Planner 关联、简化形式与运行时结构 |
-| [`docs/releases/v1.0.md`](docs/releases/v1.0.md) | 当前 v1.0 基线（分层架构定型版）的发布说明 |
-| [`docs/planning/v1.1-backlog.md`](docs/planning/v1.1-backlog.md) | v1.1 待办清单：移植 Stanley 控制律、follow 节点精简、planner CSV 旁路日志 |
-| [`docs/planning/post-v1.1-backlog.md`](docs/planning/post-v1.1-backlog.md) | v1.1 之后的结构性改进项：接口扩展、安全契约、时间戳治理、real/sim 复用 |
-| [`docs/planning/background-pan-code.md`](docs/planning/background-pan-code.md) | 项目由单节点状态机演化为分层架构的背景，以及潘 `path_follower_node_path3.py` 的原理与作用 |
+| [`docs/releases/v1.0.md`](docs/releases/v1.0.md) | v1.0 基线（分层架构定型版）的发布说明 |
+| [`docs/planning/v1.1-backlog.md`](docs/planning/v1.1-backlog.md) | v1.1 待办清单 |
+| [`docs/planning/post-v1.1-backlog.md`](docs/planning/post-v1.1-backlog.md) | v1.1 后的结构性改进项 |
+| [`docs/planning/background-pan-code.md`](docs/planning/background-pan-code.md) | 项目背景与架构演进 |
+
+## 分支与版本
+
+| 分支 | 版本 | 控制模式 | 说明 |
+|------|------|---------|------|
+| `main` | v1.0 | Legacy | 纯航向 P + 预瞄 |
+| `Baja-resource-origin-7.23-v1.1` | v1.1 | Stanley | Stanley + PD + 双阻尼 + 自适应速度/转向 |
+| `v1.2-LQR` | v1.2 | LQR | Bézier 平滑 + LQR 切片预测 + 预测轨迹可视化 |
+| **`v1.3-Smoother`** | **v1.3** | **LQR** | **时间对齐查表 + Frenet(s,l) 双轴反馈 + 两级安全预警** |
 
 ## 场景与车辆
 
@@ -26,7 +32,7 @@ Python 标准库和 ROS 2 消息，不依赖 Torch、NumPy、SciPy、OpenCV。
 - 292 kg 后驱、前轮 Ackermann 转向四轮刚体模型；
 - 质量、转动惯量、轮胎接触摩擦、转向限位、速度/加速度/jerk 限制；
 - Gazebo 世界真实位姿 `/ground_truth/odom`；
-- 1.5 cm 标准差、3σ有界的位置噪声，输出 `/localization/odom`、`/gps/fix` 和 `/imu/yaw`。
+- 1.5 cm 标准差、3σ有界的位置噪声。
 
 当前模型属于基础刚体接触动力学，不包含悬架连杆、轮胎形变、动力电机转矩曲线、制动液压
 和可变土壤沉陷，因此不能视为经过实车标定的完整整车动力学模型。
@@ -39,7 +45,7 @@ sudo apt-get install -y ffmpeg
 ./build.sh
 ```
 
-如果 ROS 2 Humble、Gazebo Harmonic 等环境尚未安装，再使用：
+如果 ROS 2 Humble、Gazebo Harmonic 等环境尚未安装：
 
 ```bash
 ./install_ubuntu2204.sh
@@ -63,8 +69,7 @@ sudo apt-get install -y ffmpeg
 ./run.sh --seed 42 --obstacles 5 --headless-gazebo --no-rviz
 ```
 
-调试时可用 `--no-video` 关闭录像。正常运行时按 `Ctrl+C`，录像节点会关闭 ffmpeg 并完成
-MP4 文件封装，不要直接使用 `kill -9`。
+调试时可用 `--no-video` 关闭录像。
 
 ## 数据流
 
@@ -80,101 +85,136 @@ Gazebo OdometryPublisher（世界真实位姿）
        │    └─ /obstacle_markers
        └─ evaluator
 
-frenet_planner
-  └─ /planned_path
-       └─ path_follower
-            └─ /cmd_control（期望速度 + 期望转角）
+frenet_planner (10 Hz)
+  └─ /planned_path (绿色, nav_msgs/Path)
+       └─ path_follower (50 Hz)
+            ├─ [LQR 模式] TrajectorySmoother
+            │    ├─ Bézier 分段拟合 → /smoothed_path (蓝色)
+            │    └─ 双通速度剖面 + 时间戳 → TrajectoryTable
+            ├─ [LQR 模式] _lqr_control_step()
+            │    ├─ 时间对齐查表 → (v_ref, δ_ff)
+            │    ├─ Frenet(s,l) 双轴反馈 → (v_fb ±0.5, δ_fb ±3°)
+            │    └─ 合成 + rate-limit + lowpass
+            ├─ _compute_safety_speed()
+            │    └─ /predicted_trajectory (黄色) vs planned_path → L1/L2 预警
+            └─ /cmd_control (AckermannDriveStamped)
                  └─ actuator_adapter
                       └─ /model/baja_vehicle/cmd_vel
                            └─ Gazebo AckermannSteering
 ```
 
-`/wheel_odom` 是 Ackermann 插件根据轮速和转向角积分得到的轮式里程计；它与世界真值分开，
-不用于闭环评价。
+### RViz 可视化
 
-## 代码结构与核心逻辑
+| 颜色 | Topic | 含义 |
+|------|-------|------|
+| 绿色 | `/planned_path` | Planner 原始路径 |
+| 蓝色 | `/smoothed_path` | Bézier 平滑后参考路径 |
+| **黄色** | `/predicted_trajectory` | 当前 (v,δ) 运动学 2s 前推预测 |
 
-算法包位于 `src/baja_cloud_sim/baja_cloud_sim/`，各节点与入口名（见 `setup.py` 的
-`console_scripts`）如下：
+## 代码结构
+
+算法包位于 `src/baja_cloud_sim/baja_cloud_sim/`：
 
 ```text
-core.py                   纯 Python 几何/规划/控制函数库（无 ROS 依赖，云端与车端通用）
+core.py                   纯 Python 几何/规划/控制函数库（规划部分仅标准库；
+                          LQR 控制路径需 numpy/scipy，由 path_follower_node 组装）
+trajectory_smoother.py    Bézier 分段拟合 + 解析曲率 + 弧长重采样 + 双通速度剖面
+                          （纯标准库）
+lqr_controller.py         Bicycle model LQR + 离线增益表（DARE 迭代）+ 在线插值查表
+                          （需 numpy、scipy）
 scenario_generator.py     generate_scenario：按 seed 生成中心线、边界、障碍与 Gazebo 世界
 truth_perception_node.py  truth_perception：由真值里程计派生定位/GPS/IMU/中心线/边界/障碍话题
-frenet_planner_node.py    frenet_planner：规划核心，输出 /planned_path
-path_follower_node.py     path_follower：路径跟踪，输出 /cmd_control（期望速度 + 转角）
+frenet_planner_node.py    frenet_planner：Frenet 栅格 DP 规划核心，输出 /planned_path
+path_follower_node.py     path_follower：支持三种模式 (legacy / stanley / lqr)
 actuator_adapter_node.py  actuator_adapter：/cmd_control → Gazebo AckermannSteering 指令
 evaluator_node.py         evaluator：跟踪误差等指标评价与 CSV 记录
 video_recorder_node.py    video_recorder：录制 Gazebo 追踪相机视频
 ```
 
-**核心逻辑**：本工程的规划核心是 Frenet 局部规划器（`frenet_planner_node.py` 与 `core.py`
-的 `plan_frenet_path`）。它在车道中心线构成的 Frenet 坐标系下，用"分层撒点 + 动态规划"搜索
-一条居中、平顺、无碰撞的局部路径，以 10 Hz 周期发布 `/planned_path`，再交由 `path_follower`
-跟踪、`actuator_adapter` 执行。坐标基础、与 Apollo EM Planner 的关联、简化形式与运行时结构
-详见 [`docs/frenet_planner.md`](docs/frenet_planner.md)。
+## v1.3-Smoother 控制架构
 
-**v1.1 follow 控制律**：v1.0 的 `path_follower` 使用 `legacy_path_control`（纯航向 P + 预瞄
-+ 按转角分档降速）。v1.1 在 `core.py` 中新增 `stanley_path_control`，由潘
-`path_follower_node_path3.py` 的精华提炼而来：
+### 前馈层 — Trajectory Smoother
 
-- **Stanley 主项** `atan2(k_stanley · CTE, max(target_speed, 2.0))`，由 `signed_lateral`
-  提供带符号横向偏差；
-- **PD 主项** `kp · heading_error + kd · d_heading/dt`；
-- **双阻尼**：CTE 变化率（`k_cte_dot`）抑制冲出，航向角速度（`k_yaw_rate`，低通
-  `α=0.7` 后乘 `0.3`）抑制急弯出弯过冲；
-- **转向平滑**：动态最大转角（自适应）、转向低通（`α=0.6`）、单帧速率限制
-  `max_steer_rate_deg`；
-- **按转角分档降速**（与 v1.0 legacy 表一致：`>30°/20°/12°/6° → 0.50/0.70/0.85/0.95`），
-  可选按前方前瞻曲率自适应降速（`adaptive_speed`）。
+```
+/planned_path (31点, ~1m间距)
+    │
+    ▼
+TrajectorySmoother.generate()     ← _path_callback 触发 (≤10 Hz)
+    │
+    ├─ 分段三次 Bézier（3段 × 4控制点，G¹ 连续）
+    ├─ 弧长重采样 (Δs=0.15m) + 解析曲率 κ(s)
+    ├─ 双通速度剖面: 前向加速度约束 + 后向弯道预减速
+    ├─ 时间戳: t[i] = t[i-1] + Δs / v_avg
+    │
+    ▼
+TrajectoryTable
+    generated_at: ROS 绝对时间
+    points: [{t, x, y, yaw, v_ref, δ_ff, κ}, ...]
+```
 
-选择由新增参数 `controller_mode ∈ {legacy, stanley}` 控制，默认 `stanley`；
-`legacy` 保留为回退入口，用于回归对比与故障兜底。详细规划与参数表见
-[`docs/planning/v1.1-backlog.md`](docs/planning/v1.1-backlog.md)，
-决策依据与算法来源见
-[`docs/planning/background-pan-code.md`](docs/planning/background-pan-code.md)。
+### 反馈层 — Frenet(s,l) 双轴反馈
 
-**v1.1 planner CSV 日志**：`frenet_planner_node` 新增旁路 CSV 日志（参数
-`enable_path_log`、`path_log_dir`），每个 10 Hz 规划周期写一个
-`planned_path_<timestamp>.csv`（列：`timestamp_s, x, y, yaw, seq`）。**写失败不致命**，
-仅 warn，绝不阻塞发布。
+每 50ms 控制周期：
 
-## 已知问题：Frenet 规划器的时间戳与时间同步
+1. **时间对齐查表**: `elapsed = now - table.generated_at` → 插值取参考行
+2. **Frenet(s,l)**:
+   - `l = signed_lateral()` — 横向偏差 (CTE)
+   - `s = (pos - ref) · tangent` — 沿路径超前/落后量
+3. **s 轴反馈**: `v_fb ∈ [-0.5, +0.5] m/s`，s>0（超前/下坡超速）→ 自动减速
+4. **l 轴反馈**: LQR gain-scheduled δ_fb ∈ [-3°, +3°]
+5. **合成**: `v = v_ref + v_fb`, `δ = δ_ff + δ_fb`
+6. **后处理**: rate-limit + steering lowpass (α=0.6) + speed lowpass (α=0.6)
 
-`frenet_planner_node.py` 目前对各传感器话题采用"最新值快照"策略，回调里完全没有使用消息头
-`header.stamp`，存在以下时间戳相关问题：
+### 安全层 — 两级预警
 
-1. **多源数据无时间同步**：`/gps/fix`、`/imu/yaw`、`/road_boundary_markers`、
-   `/obstacle_markers` 分别在各自回调里直接覆盖 `self.position`、`self.yaw_world`、
-   `self.left_world` / `self.right_world`、`self.obstacles`。定时器 `_plan`（10 Hz）触发时
-   把当前所有最新值直接融合，不校验它们是否来自同一时刻。各话题频率不同（GPS/IMU 约 20 Hz、
-   边界/障碍约 10 Hz），因此每次规划使用的其实是一组时间上并不对齐的数据。此外 `/imu/yaw`
-   使用 `std_msgs/Float32`，消息本身没有 header，从类型上就无法携带时间戳。
+对当前 (v,δ) 做运动学前推 40 步 (2s)，逐点计算到 `/planned_path` 的最短距离：
 
-2. **坐标变换用的是回调时刻位姿，而非传感器采样时刻位姿**：`_boundary_callback`、
-   `_obstacle_callback` 用 `base_to_world(..., self.position, self.yaw_world)` 把车体系点
-   转到世界系，使用的是"当前最新"的位姿，而不是该边界/障碍消息被观测时的位姿。当车辆以速度
-   v 行驶、位姿与感知数据存在 Δt 的时间差时，会引入约 v·Δt 的位置误差（例如
-   5 m/s × 50 ms ≈ 0.25 m），障碍膨胀框和可行走廊会随之偏移。
+| 级别 | 最大偏差 | 动作 |
+|------|---------|------|
+| 正常 | < 0.8 m | 无干预 |
+| L1 | 0.8 ~ 1.5 m | 强制 speed = 0.8 m/s |
+| L2 | ≥ 1.5 m | 强制 speed = 0.4 m/s |
 
-3. **规划路径盖的是"发布时刻"时间戳**：`_plan` 中
-   `message.header.stamp = self.get_clock().now().to_msg()`，输出的 `/planned_path` 打的是
-   发布瞬间的时间，而不是其所依据的里程计/感知数据的时间。下游（`path_follower`、
-   `evaluator`）无法据此判断规划结果对应的真实时刻与延迟，容易产生时间错位（类似评价节点
-   历史上出现过的 ghost trail 问题）。
+安全层独立于反馈层，只降速不改转向。
 
-4. **缺少数据新鲜度检查**：`_plan` 仅检查数据是否存在（`self.position is None`、
-   `len(self.centerline) < 3` 等），不检查数据是否过期。一旦 GPS/IMU 掉线，规划器会无限期
-   沿用陈旧位姿，而不会降级或安全停车。
+### 控制器模式
 
-**改进方向**：
+由参数 `controller_mode` 控制：
 
-- 订阅时读取并保存每条消息的 `header.stamp`，在 `_plan` 中对齐到共同时间基准，或使用
-  `message_filters` 做近似时间同步；对 `/imu/yaw` 换用带 header 的消息类型（如
-  `sensor_msgs/Imu`）。
-- 坐标变换使用与感知消息时间戳最接近的位姿，对位姿做时间插值/外推后再做 `base_to_world`。
-- `/planned_path` 使用输入数据的时间戳而非发布时刻，保证与下游的时间一致性。
-- 增加数据超时判断，超时则发布 `INFEASIBLE` 或触发安全停车。
+| 模式 | 描述 |
+|------|------|
+| `legacy` | 纯航向 P + 预瞄 (v1.0 回退) |
+| `stanley` | Stanley + PD + 双阻尼 + 自适应速度/转向 (v1.1) |
+| `lqr` | Bézier 平滑 + LQR + Frenet(s,l) + 两级预警 (v1.2 / v1.3) |
+
+### v1.3 新增/调整参数
+
+```yaml
+path_follower_node:
+  ros__parameters:
+    controller_mode: lqr          # legacy | stanley | lqr
+    lqr_q_cte: 10.0               # LQR 横向偏差权重
+    lqr_q_cte_dot: 1.0            # LQR 横向速度权重
+    lqr_q_heading: 5.0            # LQR 航向偏差权重
+    lqr_q_yaw_rate: 0.5           # LQR 横摆率权重
+    lqr_r_steer: 5.0              # LQR 控制量惩罚
+    lqr_fb_limit_deg: 3.0         # l 轴反馈 ±3°
+```
+
+## 已知问题
+
+### Frenet 规划器的时间戳与时间同步
+
+`frenet_planner_node.py` 采用"最新值快照"策略，存在多源数据未对齐、
+坐标变换用回调时刻位姿而非采样时刻位姿、路径时间戳为发布时刻等问题。
+详见历史版本的 README。
+
+### 下坡超速
+
+Gazebo 地形含小土坡，车辆下坡时重力加速可能超过指令速度。
+v1.3 通过 Frenet(s,l) 的 s 轴反馈（检测超前）主动降速 ±0.5 m/s，
+配合两级安全预警做双重保护，但仍为间接手段。未来可考虑直接订阅
+GPS 速度反馈做超速检测。
 
 ## 输出
 
@@ -185,9 +225,6 @@ runtime/scenario_<seed>/scenario.json
 results/seed_<seed>/tracking_YYYYMMDD_HHMMSS.csv
 results/seed_<seed>/gazebo_YYYYMMDD_HHMMSS.mp4
 ```
-
-MP4 来自附着在车辆上的 Gazebo 1280×720、30 FPS 追踪相机，在 GUI 和服务器无界面模式下
-都可录制。
 
 ## 测试
 
