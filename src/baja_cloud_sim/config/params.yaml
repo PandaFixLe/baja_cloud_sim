@@ -35,16 +35,16 @@ path_follower_node:
     kd_heading: 0.3
     k_stanley: 0.8
     k_cte_dot: 0.15
-    k_yaw_rate: 0.5
+    k_yaw_rate: 0.6
     steering_alpha: 0.6
     max_steer_rate_deg: 8.0
     adaptive_steering: true
     adaptive_speed: true
     # LQR controller (used when controller_mode == "lqr")
-    lqr_q_cte: 15.0
-    lqr_q_cte_dot: 1.0
-    lqr_q_heading: 5.0
-    lqr_q_yaw_rate: 0.5
+    lqr_q_cte: 20.0
+    lqr_q_cte_dot: 1.8
+    lqr_q_heading: 12.0
+    lqr_q_yaw_rate: 0.4
     lqr_r_steer: 10.0
     lqr_fb_limit_deg: 15.0
 
