@@ -319,9 +319,9 @@ class PlannerConfig:
     horizon_m: float = 30.0
     layer_spacing_m: float = 1.0
     lateral_spacing_m: float = 0.25
-    vehicle_length: float = 3.0
-    vehicle_width: float = 1.5
-    safety_margin: float = 0.25
+    vehicle_length: float = 2.1
+    vehicle_width: float = 1.55
+    safety_margin: float = 0.15
     desired_clearance: float = 1.2
     center_weight: float = 1.0
     clearance_weight: float = 12.0
