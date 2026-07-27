@@ -16,8 +16,8 @@ frenet_planner_node:
     center_weight: 1.0
     clearance_weight: 12.0
     desired_clearance: 1.2
-    vehicle_length: 3.0
-    vehicle_width: 1.5
+    vehicle_length: 2.1
+    vehicle_width: 1.55
     enable_path_log: true
     path_log_dir: results
 
