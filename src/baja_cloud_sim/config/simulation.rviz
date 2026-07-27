@@ -48,6 +48,26 @@ Visualization Manager:
         Value: /planned_path
     - Class: rviz_default_plugins/Path
       Enabled: true
+      Name: Smoothed Path
+      Line Style: Billboards
+      Line Width: 0.04
+      Color: 50; 150; 255
+      Alpha: 1
+      Buffer Length: 1
+      Topic:
+        Value: /smoothed_path
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Predicted Trajectory
+      Line Style: Billboards
+      Line Width: 0.04
+      Color: 255; 255; 0
+      Alpha: 1
+      Buffer Length: 1
+      Topic:
+        Value: /predicted_trajectory
+    - Class: rviz_default_plugins/Path
+      Enabled: true
       Name: Actual Trajectory
       Line Style: Billboards
       Line Width: 0.06
