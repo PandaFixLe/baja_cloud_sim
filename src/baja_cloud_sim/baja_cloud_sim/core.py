@@ -544,7 +544,7 @@ class StanleyControllerConfig(ControllerConfig):
     adaptive_speed: bool = True
     preview_curv_boost_limit: float = 1.5
     preview_curv_boost_scale: float = 5.0
-    speed_alpha: float = 0.30
+    speed_alpha: float = 0.60
 
 
 @dataclass
@@ -695,21 +695,13 @@ def stanley_path_control(
     )
     yaw_rate_term = cfg.yaw_rate_scale * state.yaw_rate_filtered
 
-    v_safe = max(cfg.target_speed, cfg.min_speed_for_stanley)
+    actual_v = max(state.prev_speed, 0.5)
+    v_safe = max(actual_v, cfg.min_speed_for_stanley)
     stanley_term = math.atan2(cfg.k_stanley * cte, v_safe)
 
     if cfg.adaptive_steering:
-        # Straight roads: limit max steering to prevent oscillation.
-        # Curves: progressively allow full steering to make tight turns.
-        if preview_curv_steer > 0.15:       # tight bend (>8.6°/m)
-            factor = 1.00
-        elif preview_curv_steer > 0.08:     # moderate bend (>4.6°/m)
-            factor = 0.85
-        elif preview_curv_steer > 0.04:     # gentle bend (>2.3°/m)
-            factor = 0.70
-        else:                               # straight road (<2.3°/m)
-            factor = 0.50
-        max_steer = math.radians(cfg.max_steering_deg * factor)
+        scale = 1.0 + min(preview_curv_steer * cfg.preview_curv_boost_scale, cfg.preview_curv_boost_limit)
+        max_steer = math.radians(cfg.max_steering_deg) / scale
     else:
         max_steer = math.radians(cfg.max_steering_deg)
 
@@ -737,20 +729,20 @@ def stanley_path_control(
     state.prev_cte = cte
 
     steering_deg = abs(math.degrees(steering))
-    if steering_deg > 30.0:
-        speed_factor = 0.45
-    elif steering_deg > 20.0:
-        speed_factor = 0.65
-    elif steering_deg > 12.0:
-        speed_factor = 0.80
-    elif steering_deg > 6.0:
-        speed_factor = 0.95
+    if steering_deg > 25.0:
+        speed_factor = 0.35
+    elif steering_deg > 15.0:
+        speed_factor = 0.55
+    elif steering_deg > 8.0:
+        speed_factor = 0.75
+    elif steering_deg > 4.0:
+        speed_factor = 0.90
     else:
         speed_factor = 1.0
 
     if cfg.adaptive_speed:
-        curv_factor = 1.0 / (1.0 + preview_curv * 3.0)
-        speed_factor = min(speed_factor, max(0.35, curv_factor))
+        adaptive_scale = 1.0 / (1.0 + preview_curv * 6.0)
+        speed_factor *= max(0.30, adaptive_scale)
 
     # Speed low-pass filter: smooth speed changes,
     # preventing sudden acceleration after obstacle avoidance.
