@@ -292,12 +292,7 @@ class PathFollowerNode(Node):
                 ref = _Interp()
                 ref.x = points[i].x + alpha * (points[i + 1].x - points[i].x)
                 ref.y = points[i].y + alpha * (points[i + 1].y - points[i].y)
-                # angle-aware interpolation: unwrap across ±π boundary
-                dyaw = math.atan2(
-                    math.sin(points[i + 1].yaw - points[i].yaw),
-                    math.cos(points[i + 1].yaw - points[i].yaw),
-                )
-                ref.yaw = points[i].yaw + alpha * dyaw
+                ref.yaw = points[i].yaw + alpha * (points[i + 1].yaw - points[i].yaw)
                 ref.speed_limit = points[i].speed_limit + alpha * (points[i + 1].speed_limit - points[i].speed_limit)
                 ref.steering_ff = points[i].steering_ff + alpha * (points[i + 1].steering_ff - points[i].steering_ff)
                 return ref
