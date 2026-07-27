@@ -95,6 +95,7 @@ class PathFollowerNode(Node):
             self.stanley_config = None
             self.stanley_state = None
         self.position = None
+        self.prev_position = None   # for GPS speed estimation
         self.yaw_navigation = 0.0
         self.path = []
         self.planner_feasible = False
@@ -146,6 +147,8 @@ class PathFollowerNode(Node):
     def _gps_callback(self, message: NavSatFix) -> None:
         x = (message.longitude - self.origin_lon) * 111320.0 * math.cos(math.radians(self.origin_lat))
         y = (message.latitude - self.origin_lat) * 111320.0
+        if self.position is not None:
+            self.prev_position = self.position
         self.position = (x, y)
 
     def _yaw_callback(self, message: Float32) -> None:
@@ -298,6 +301,14 @@ class PathFollowerNode(Node):
                 return ref
         return points[-1]
 
+    def _estimate_gps_speed(self) -> float:
+        """Estimate actual speed from consecutive GPS positions."""
+        if self.position is None or self.prev_position is None:
+            return 0.0
+        dx = self.position[0] - self.prev_position[0]
+        dy = self.position[1] - self.prev_position[1]
+        return math.hypot(dx, dy) / 0.05  # GPS at ~20 Hz, ~50 ms between samples
+
     def _lqr_control_step(self):
         """Time-aligned lookup + Frenet(s,l) dual-axis feedback + rate-limit + lowpass."""
         cfg = self.stanley_config
@@ -341,10 +352,24 @@ class PathFollowerNode(Node):
         dy = self.position[1] - ref.y
         s = dx * math.cos(ref.yaw) + dy * math.sin(ref.yaw)
 
-        # --- s-axis feedback → v_correction ±0.5 m/s ---
+        # --- s-axis feedback → v_correction ±0.3 m/s ---
         k_s = 1.0
         v_fb = clamp(-k_s * s, -0.3, 0.3)  # s>0 (ahead/overspeed) → decelerate
+
+        # s-axis D-term: derivative of s-deviation catches downhill acceleration early
+        if state.initialized:
+            ds_dt = (s - state.prev_s) / 0.05  # m/s, how fast car is pulling ahead
+            if ds_dt > 0.3:                     # threshold: pulling ahead > 0.3 m/s
+                extra_cut = min(0.5, 2.0 * (ds_dt - 0.3))
+                v_fb -= extra_cut
+        state.prev_s = s
+
         v_cmd = clamp(ref.speed_limit + v_fb, 0.1, cfg.target_speed)
+
+        # GPS speed guard: if actual speed far exceeds command, force deceleration
+        actual_v = self._estimate_gps_speed()
+        if actual_v > 0.0 and actual_v > v_cmd * 1.3 and actual_v > 1.5:
+            v_cmd *= 0.5
 
         # --- l-axis feedback → δ_fb ±3° ---
         heading_error = wrap_angle(ref.yaw - yaw_math)

@@ -558,6 +558,7 @@ class StanleyState:
     yaw_rate_filtered: float = 0.0
     last_nearest: int = 0
     prev_speed: float = 0.0
+    prev_s: float = 0.0      # previous Frenet s-deviation (for D-term downhill detection)
     initialized: bool = False
 
 
