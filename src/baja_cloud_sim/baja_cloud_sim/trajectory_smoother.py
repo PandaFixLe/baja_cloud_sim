@@ -27,7 +27,8 @@ class TrajectoryPoint:
     yaw: float          # tangent direction (rad, math frame: 0=+X, CCW+)
     curvature: float    # signed curvature (rad/m), left-positive
     speed_limit: float  # target speed at this point (m/s)
-    steering_ff: float  # feed-forward steering (rad), Ackermann: atan2(L*κ, 1)
+    steering_ff: float  # feed-forward steering (rad), Ackermann: atan2(L*κ, 1.0)
+    t: float = 0.0      # relative time offset from table generation (s)
 
 
 @dataclass
@@ -35,6 +36,7 @@ class TrajectoryTable:
     """Pre-computed lookahead trajectory for feed-forward + LQR feedback."""
     points: List[TrajectoryPoint] = field(default_factory=list)
     total_length: float = 0.0
+    generated_at: float = 0.0  # ROS time (seconds) when table was generated
 
     def __bool__(self) -> bool:
         return len(self.points) >= 2
@@ -263,6 +265,7 @@ class TrajectorySmoother:
         num_lookahead_pts: int = 12,
         segments: int = 3,
         ds_resample: float = 0.15,
+        generated_at: float = 0.0,
     ) -> Optional[TrajectoryTable]:
         """Generate a smoothed trajectory table from raw path points.
 
@@ -352,7 +355,16 @@ class TrajectorySmoother:
         for i, pt in enumerate(table_points):
             pt.speed_limit = speeds[i]
 
+        # ---- time stamps:  t[i] = t[i-1] + Δs / v_avg  ----
+        t = 0.0
+        for i, pt in enumerate(table_points):
+            pt.t = t
+            if i < len(table_points) - 1:
+                v_avg = max((speeds[i] + speeds[i + 1]) * 0.5, 0.1)
+                t += ds_resample / v_avg
+
         return TrajectoryTable(
             points=table_points,
             total_length=total_arc,
+            generated_at=generated_at,
         )

@@ -17,9 +17,15 @@ from .core import (
     ControllerConfig,
     StanleyControllerConfig,
     StanleyState,
+    clamp,
     legacy_path_control,
     stanley_path_control,
     lqr_path_control,
+    signed_lateral,
+    polyline_distance,
+    wrap_angle,
+    augment_path_for_cte,
+    nearest_index,
 )
 from .trajectory_smoother import TrajectorySmoother, TrajectoryTable
 from .lqr_controller import LQRController, LQRConfig
@@ -134,8 +140,10 @@ class PathFollowerNode(Node):
         # LQR mode: regenerate trajectory table on each new path
         if self.controller_mode == "lqr" and self.smoother is not None:
             target_speed = float(self.get_parameter("target_speed").value)
+            generated_at = self.get_clock().now().nanoseconds * 1e-9
             self.trajectory_table = self.smoother.generate(
                 self.path, target_speed=target_speed,
+                generated_at=generated_at,
             )
             if self.lqr_ctrl is None and self.trajectory_table is not None:
                 self.lqr_ctrl = LQRController(LQRConfig())
@@ -171,6 +179,45 @@ class PathFollowerNode(Node):
             ps.pose.orientation.w = math.cos(half_yaw)
             msg.poses.append(ps)
         self.smoothed_pub.publish(msg)
+
+    def _compute_safety_speed(self, speed_cmd: float, steering: float) -> float:
+        """Two-level safety monitor: forward-sim predicted trajectory vs planned path.
+
+        Level 1 (max_dev ≥ 0.8 m) → speed = 0.8 m/s
+        Level 2 (max_dev ≥ 1.5 m) → speed = 0.4 m/s
+        """
+        if self.position is None or len(self.path) < 4:
+            return speed_cmd
+
+        wheelbase = 1.43
+        dt = 0.05
+        n_steps = 40
+        yaw = math.pi * 0.5 - self.yaw_navigation
+        px, py = self.position
+        v = max(speed_cmd, 0.1)
+
+        max_dev = 0.0
+        for _ in range(n_steps):
+            px += v * math.cos(yaw) * dt
+            py += v * math.sin(yaw) * dt
+            yaw += (v / wheelbase) * math.tan(steering) * dt
+            d = polyline_distance((px, py), self.path)
+            if d > max_dev:
+                max_dev = d
+
+        if max_dev >= 1.5:
+            self.get_logger().warn(
+                f"SAFETY L2: max_dev={max_dev:.2f}m → speed=0.4",
+                throttle_duration_sec=0.5,
+            )
+            return 0.4
+        if max_dev >= 0.8:
+            self.get_logger().warn(
+                f"SAFETY L1: max_dev={max_dev:.2f}m → speed=0.8",
+                throttle_duration_sec=0.5,
+            )
+            return 0.8
+        return speed_cmd
 
     def _publish_stop(self) -> None:
         message = AckermannDriveStamped()
@@ -210,6 +257,110 @@ class PathFollowerNode(Node):
 
         self.predicted_pub.publish(msg)
 
+    @staticmethod
+    def _interp_table_by_time(points, elapsed):
+        """Linear interpolation on trajectory table by time offset."""
+        if elapsed <= points[0].t:
+            return points[0]
+        for i in range(len(points) - 1):
+            if points[i].t <= elapsed <= points[i + 1].t:
+                dt = points[i + 1].t - points[i].t
+                if dt < 1e-9:
+                    return points[i]
+                alpha = (elapsed - points[i].t) / dt
+                # Simple interpolation of key fields via a lightweight dict
+                class _Interp:
+                    pass
+                ref = _Interp()
+                ref.x = points[i].x + alpha * (points[i + 1].x - points[i].x)
+                ref.y = points[i].y + alpha * (points[i + 1].y - points[i].y)
+                ref.yaw = points[i].yaw + alpha * (points[i + 1].yaw - points[i].yaw)
+                ref.speed_limit = points[i].speed_limit + alpha * (points[i + 1].speed_limit - points[i].speed_limit)
+                ref.steering_ff = points[i].steering_ff + alpha * (points[i + 1].steering_ff - points[i].steering_ff)
+                return ref
+        return points[-1]
+
+    def _lqr_control_step(self):
+        """Time-aligned lookup + Frenet(s,l) dual-axis feedback + rate-limit + lowpass."""
+        cfg = self.stanley_config
+        state = self.stanley_state
+        table = self.trajectory_table
+
+        # fallback to Stanley if table is missing
+        if table is None or len(table.points) < 2 or self.lqr_ctrl is None:
+            cmd = stanley_path_control(
+                self.position, self.yaw_navigation, self.path,
+                cfg, state, dt=0.05,
+            )
+            self.stanley_state = cmd["state"]
+            return cmd["speed"], cmd["steering"], cmd["target_x"], cmd["target_y"]
+
+        # --- time-aligned lookup ---
+        elapsed = self.get_clock().now().nanoseconds * 1e-9 - table.generated_at
+        ref = self._interp_table_by_time(table.points, elapsed)
+
+        # --- init state on first tick ---
+        yaw_math = math.pi * 0.5 - self.yaw_navigation
+        if not state.initialized:
+            state.prev_steering = 0.0
+            state.prev_yaw = yaw_math
+            state.prev_speed = cfg.target_speed
+            state.yaw_rate_filtered = 0.0
+            state.last_nearest = 0
+            state.initialized = True
+
+        # --- Frenet (s, l) ---
+        augmented = augment_path_for_cte(self.path)
+        nearest = nearest_index(
+            [(p["x"], p["y"]) for p in augmented],
+            self.position, hint=getattr(state, "last_nearest", 0),
+        )
+        state.last_nearest = max(0, nearest - 4)
+        l = signed_lateral(self.position, augmented[nearest])
+
+        # s: project position error onto reference tangent direction
+        dx = self.position[0] - ref.x
+        dy = self.position[1] - ref.y
+        s = dx * math.cos(ref.yaw) + dy * math.sin(ref.yaw)
+
+        # --- s-axis feedback → v_correction ±0.5 m/s ---
+        k_s = 1.0
+        v_fb = clamp(-k_s * s, -0.5, 0.5)  # s>0 (ahead/overspeed) → decelerate
+        v_cmd = clamp(ref.speed_limit + v_fb, 0.1, cfg.target_speed)
+
+        # --- l-axis feedback → δ_fb ±3° ---
+        heading_error = wrap_angle(ref.yaw - yaw_math)
+        yaw_rate_raw = wrap_angle(yaw_math - state.prev_yaw) / 0.05
+        state.yaw_rate_filtered = 0.7 * state.yaw_rate_filtered + 0.3 * yaw_rate_raw
+
+        from .lqr_controller import VehicleState
+        vehicle = VehicleState(
+            speed=max(state.prev_speed, 0.5),
+            cte=l,
+            heading_error=heading_error,
+            yaw_rate=state.yaw_rate_filtered,
+        )
+        _, _, _, δ_fb = self.lqr_ctrl.compute(table, vehicle, cfg.target_speed)
+        δ_fb = clamp(δ_fb, -math.radians(3.0), math.radians(3.0))
+        δ_cmd = ref.steering_ff + δ_fb
+
+        # --- rate-limit + lowpass on steering ---
+        max_steer = math.radians(cfg.max_steering_deg)
+        δ_clamped = clamp(δ_cmd, -max_steer, max_steer)
+        filtered = cfg.steering_alpha * δ_clamped + (1.0 - cfg.steering_alpha) * state.prev_steering
+        rate_rad = math.radians(cfg.max_steer_rate_deg)
+        delta_step = clamp(filtered - state.prev_steering, -rate_rad * 0.05, rate_rad * 0.05)
+        steering = state.prev_steering + delta_step
+        state.prev_steering = steering
+
+        # --- speed lowpass ---
+        state.prev_speed += cfg.speed_alpha * (v_cmd - state.prev_speed)
+        speed = state.prev_speed
+
+        state.prev_yaw = yaw_math
+
+        return speed, steering, ref.x, ref.y
+
     def _control(self) -> None:
         if self.position is None or not self.planner_feasible or len(self.path) < 2:
             self._publish_stop()
@@ -224,16 +375,7 @@ class PathFollowerNode(Node):
             steering = float(command["steering"])
             target_x, target_y = float(command["target_x"]), float(command["target_y"])
         elif self.controller_mode == "lqr":
-            command = lqr_path_control(
-                self.position, self.yaw_navigation, self.path,
-                self.stanley_config, self.stanley_state, dt=0.05,
-                trajectory_table=self.trajectory_table,
-                lqr_ctrl=self.lqr_ctrl,
-            )
-            self.stanley_state = command["state"]
-            speed = float(command["speed"])
-            steering = float(command["steering"])
-            target_x, target_y = float(command["target_x"]), float(command["target_y"])
+            speed, steering, target_x, target_y = self._lqr_control_step()
         else:
             command = stanley_path_control(
                 self.position, self.yaw_navigation, self.path,
@@ -243,6 +385,9 @@ class PathFollowerNode(Node):
             speed = float(command["speed"])
             steering = float(command["steering"])
             target_x, target_y = float(command["target_x"]), float(command["target_y"])
+
+        # ---- safety overlay: two-level warning based on predicted deviation ----
+        speed = self._compute_safety_speed(speed, steering)
 
         message = AckermannDriveStamped()
         message.header.stamp = self.get_clock().now().to_msg()

@@ -45,7 +45,7 @@ class LQRConfig:
     r_steer: float = 5.0         # steering effort penalty
 
     # ---- Feedback clamp ----
-    fb_limit_deg: float = 15.0   # cap feedback steering to ± this many degrees
+    fb_limit_deg: float = 3.0   # cap feedback steering to ± this many degrees
 
     # ---- Gain-scheduling grid ----
     speed_min: float = 0.5       # m/s
