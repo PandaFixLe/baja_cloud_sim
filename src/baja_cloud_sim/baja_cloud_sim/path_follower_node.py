@@ -102,6 +102,9 @@ class PathFollowerNode(Node):
             self.smoother = None
             self.smoothed_pub = None
 
+        # Predicted trajectory (kinematic bicycle forward-sim in RViz)
+        self.predicted_pub = self.create_publisher(PathMessage, "/predicted_trajectory", 10)
+
         self.create_subscription(NavSatFix, "/gps/fix", self._gps_callback, 20)
         self.create_subscription(Float32, "/imu/yaw", self._yaw_callback, 20)
         self.create_subscription(PathMessage, "/planned_path", self._path_callback, 10)
@@ -177,6 +180,36 @@ class PathFollowerNode(Node):
         message.drive.steering_angle = 0.0
         self.command_pub.publish(message)
 
+    def _publish_predicted_trajectory(self, speed: float, steering: float) -> None:
+        """Forward-sim kinematic bicycle for 1 second and publish as Path."""
+        if self.position is None:
+            return
+        wheelbase = 1.43
+        dt = 0.05
+        steps = 20
+        # Convert navigation yaw (0=North, CW+) to math yaw (0=+X, CCW+)
+        yaw = math.pi * 0.5 - self.yaw_navigation
+        x, y = self.position
+        v = max(speed, 0.1)
+
+        msg = PathMessage()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "map"
+        from geometry_msgs.msg import PoseStamped
+
+        for _ in range(steps):
+            x += v * math.cos(yaw) * dt
+            y += v * math.sin(yaw) * dt
+            yaw += (v / wheelbase) * math.tan(steering) * dt
+            ps = PoseStamped()
+            ps.header = msg.header
+            ps.pose.position.x = x
+            ps.pose.position.y = y
+            ps.pose.position.z = 0.12
+            msg.poses.append(ps)
+
+        self.predicted_pub.publish(msg)
+
     def _control(self) -> None:
         if self.position is None or not self.planner_feasible or len(self.path) < 2:
             self._publish_stop()
@@ -225,6 +258,9 @@ class PathFollowerNode(Node):
         lookahead.point.y = target_y
         lookahead.point.z = 0.18
         self.lookahead_pub.publish(lookahead)
+
+        # ---- predicted trajectory (kinematic bicycle, 1 s / 20 steps) ----
+        self._publish_predicted_trajectory(speed, steering)
 
 
 def main(args=None) -> None:
