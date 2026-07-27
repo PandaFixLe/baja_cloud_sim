@@ -209,7 +209,7 @@ class PathFollowerNode(Node):
 
         wheelbase = 1.43
         dt = 0.05
-        n_steps = 40
+        n_steps = 20
         yaw = math.pi * 0.5 - self.yaw_navigation
         px, py = self.position
         v = max(speed_cmd, 0.1)
@@ -251,7 +251,7 @@ class PathFollowerNode(Node):
             return
         wheelbase = 1.43
         dt = 0.05
-        steps = 40
+        steps = 20
         # Convert navigation yaw (0=North, CW+) to math yaw (0=+X, CCW+)
         yaw = math.pi * 0.5 - self.yaw_navigation
         x, y = self.position
