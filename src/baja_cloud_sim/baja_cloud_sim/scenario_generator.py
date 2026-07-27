@@ -150,7 +150,7 @@ def generate(output: Path, seed: int, obstacle_count: int, package_share: Path) 
     world = f"""<?xml version="1.0"?>
 <sdf version="1.9">
   <world name="baja_track">
-    <physics name="high_rate_dynamics" type="ignored">
+    <physics name="high_rate_dynamics" type="ode">
       <max_step_size>0.002</max_step_size>
       <real_time_factor>1.0</real_time_factor>
       <real_time_update_rate>500</real_time_update_rate>

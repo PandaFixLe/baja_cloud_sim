@@ -709,7 +709,7 @@ def stanley_path_control(
     )
 
     rate_rad = math.radians(cfg.max_steer_rate_deg)
-    delta = clamp(filtered - state.prev_steering, -rate_rad, rate_rad)
+    delta = clamp(filtered - state.prev_steering, -rate_rad * dt, rate_rad * dt)
     steering = state.prev_steering + delta
 
     state.prev_heading_error = heading_error
