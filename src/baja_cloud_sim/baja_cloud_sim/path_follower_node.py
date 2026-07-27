@@ -292,7 +292,12 @@ class PathFollowerNode(Node):
                 ref = _Interp()
                 ref.x = points[i].x + alpha * (points[i + 1].x - points[i].x)
                 ref.y = points[i].y + alpha * (points[i + 1].y - points[i].y)
-                ref.yaw = points[i].yaw + alpha * (points[i + 1].yaw - points[i].yaw)
+                # angle-aware interpolation: unwrap across ±π boundary
+                dyaw = math.atan2(
+                    math.sin(points[i + 1].yaw - points[i].yaw),
+                    math.cos(points[i + 1].yaw - points[i].yaw),
+                )
+                ref.yaw = points[i].yaw + alpha * dyaw
                 ref.speed_limit = points[i].speed_limit + alpha * (points[i + 1].speed_limit - points[i].speed_limit)
                 ref.steering_ff = points[i].steering_ff + alpha * (points[i + 1].steering_ff - points[i].steering_ff)
                 return ref
@@ -322,7 +327,7 @@ class PathFollowerNode(Node):
         if not state.initialized:
             state.prev_steering = 0.0
             state.prev_yaw = yaw_math
-            state.prev_speed = cfg.target_speed
+            state.prev_speed = 0.5  # start from low speed, not target (avoids LQR gain mismatch)
             state.yaw_rate_filtered = 0.0
             state.last_nearest = 0
             state.initialized = True
