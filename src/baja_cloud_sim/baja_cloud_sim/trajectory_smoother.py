@@ -281,11 +281,14 @@ class TrajectorySmoother:
         """
         n_pts = len(path)
         if n_pts < 4:
+            print(f"[Smoother] return None: path too short ({n_pts} points, need ≥4)")
             return None
 
         # ---- select lookahead window ----
         window = list(path[:min(num_lookahead_pts, n_pts)])
         if len(window) < 4:
+            print(f"[Smoother] return None: window too short ({len(window)} points, "
+                  f"num_lookahead_pts={num_lookahead_pts}, n_pts={n_pts})")
             return None
 
         # ---- partition into overlapping segments ----
@@ -307,11 +310,15 @@ class TrajectorySmoother:
                 break
 
         if not bezier_segs:
+            print(f"[Smoother] return None: no Bézier segments (window={len(window)}, "
+                  f"segments={segments}, pts_per_seg={pts_per_seg})")
             return None
 
         # ---- resample uniformly in arc-length ----
         total_arc = sum(seg.arc_length for seg in bezier_segs)
         if total_arc < ds_resample:
+            print(f"[Smoother] return None: total_arc={total_arc:.4f} < "
+                  f"ds_resample={ds_resample} (n_segs={len(bezier_segs)})")
             return None
 
         # Build cumulative arc-length boundaries for each segment

@@ -198,6 +198,8 @@ class VehicleState:
     cte: float            # m    cross-track error
     heading_error: float  # rad  heading error (wrapped)
     yaw_rate: float       # rad/s  filtered yaw rate
+    x: float = 0.0        # m    world x position (for nearest-index lookup)
+    y: float = 0.0        # m    world y position (for nearest-index lookup)
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -243,7 +245,7 @@ class LQRController:
             return target_speed, 0.0, 0.0, 0.0
 
         # 1. spatial lookup — find nearest point on table
-        idx = self._nearest_index(table)
+        idx = self._nearest_index(table, vehicle.x, vehicle.y)
 
         # 2. preview slice
         preview = self._preview_slice(table, idx, vehicle.speed)
@@ -269,18 +271,26 @@ class LQRController:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _nearest_index(table: TrajectoryTable) -> int:
-        """Return index of the trajectory point closest to the start of the table.
+    def _nearest_index(table: TrajectoryTable, x: float = 0.0, y: float = 0.0) -> int:
+        """Return index of the trajectory point closest to (x, y).
 
-        In practice the table is re-generated per path update (10 Hz) and
-        the car has moved since generation, so we use the first point with
-        non-negligible curvature as a reasonable proxy for "close to car".
-
-        For a more precise version the caller can pre-compute this using
-        the vehicle's current position against table.points[].x/.y.
+        Searches the entire table for the point with minimum Euclidean distance
+        to the given world position.  Falls back to index 0 when position is
+        unavailable (x=y=0) — this preserves backward compatibility for callers
+        that don't pass position info.
         """
-        # Default: start from the beginning (table is generated from car pos)
-        return 0
+        if not table.points:
+            return 0
+        if x == 0.0 and y == 0.0:
+            return 0  # position not provided, fall back to table start
+        best_idx = 0
+        best_d2 = float("inf")
+        for i, pt in enumerate(table.points):
+            d2 = (pt.x - x) ** 2 + (pt.y - y) ** 2
+            if d2 < best_d2:
+                best_d2 = d2
+                best_idx = i
+        return best_idx
 
     @staticmethod
     def _preview_slice(

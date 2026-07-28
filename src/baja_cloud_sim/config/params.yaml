@@ -43,8 +43,8 @@ path_follower_node:
     # LQR controller (used when controller_mode == "lqr")
     lqr_q_cte: 20.0
     lqr_q_cte_dot: 1.8
-    lqr_q_heading: 12.0
-    lqr_q_yaw_rate: 0.4
+    lqr_q_heading: 4.5
+    lqr_q_yaw_rate: 0.5
     lqr_r_steer: 10.0
     lqr_fb_limit_deg: 15.0
     # terrain-aware speed limits (simulated; future: /perception/terrain_signal)

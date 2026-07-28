@@ -766,6 +766,28 @@ def stanley_path_control(
 # LQR + Bézier feed-forward path control
 # ---------------------------------------------------------------------------
 
+def _compute_heading_error_to_target(
+    current: Point,
+    yaw_navigation: float,
+    augmented: List[Dict[str, float]],
+    nearest: int,
+    lookahead_distance: float,
+) -> float:
+    """Compute heading error from current position to a lookahead target on path."""
+    path = [(p["x"], p["y"]) for p in augmented]
+    target_index = len(path) - 1
+    lookahead = max(0.5, lookahead_distance)
+    for index in range(nearest, len(path)):
+        if math.hypot(path[index][0] - current[0], path[index][1] - current[1]) >= lookahead:
+            target_index = index
+            break
+    target = path[target_index]
+    east = target[0] - current[0]
+    north = target[1] - current[1]
+    desired_navigation = math.atan2(east, north)
+    return wrap_angle(desired_navigation - yaw_navigation)
+
+
 def lqr_path_control(
     current: Point,
     yaw_navigation: float,
@@ -852,12 +874,21 @@ def lqr_path_control(
     # Import here so core.py stays stdlib-compatible when LQR is unused
     from .lqr_controller import VehicleState  # type: ignore[import-untyped]
 
-    # Feed-forward: take nearest table points for curvature-derived steering + speed
+    # Find nearest point in trajectory table based on current position
     pts = trajectory_table.points
-    n_pts = min(3, len(pts))
-    delta_ff = sum(p.steering_ff for p in pts[:n_pts]) / n_pts
-    # Use speed at a small lookahead (skip the acceleration ramp at table start)
-    idx_v = min(5, len(pts) - 1)
+    table_idx = 0
+    best_d2 = float("inf")
+    for i, pt in enumerate(pts):
+        d2 = (pt.x - current[0]) ** 2 + (pt.y - current[1]) ** 2
+        if d2 < best_d2:
+            best_d2 = d2
+            table_idx = i
+
+    # Feed-forward: average steering_ff over next few points from nearest
+    n_pts = min(3, len(pts) - table_idx)
+    delta_ff = sum(p.steering_ff for p in pts[table_idx:table_idx + n_pts]) / n_pts
+    # Use speed at a small lookahead ahead of nearest (skip acceleration ramp)
+    idx_v = min(table_idx + 5, len(pts) - 1)
     v_table = pts[idx_v].speed_limit
 
     # Feedback: LQR state built from planned_path reference (consistent CTE/heading/curvature)
@@ -874,7 +905,8 @@ def lqr_path_control(
         print(f"[LQR] v={v_lqr:.1f} K={[float(f'{x:.3f}') for x in K[0]]}")
         state._k_printed = True
     delta_fb = -float(K[0, 0] * e1 + K[0, 1] * e1_dot + K[0, 2] * e2 + K[0, 3] * e2_dot)
-    delta_fb = clamp(delta_fb, -math.radians(15.0), math.radians(15.0))
+    fb_limit = math.radians(getattr(config, "lqr_fb_limit_deg", 15.0) if config else 15.0)
+    delta_fb = clamp(delta_fb, -fb_limit, fb_limit)
 
     delta_raw = delta_ff + delta_fb
     v_cmd = min(v_table, cfg.target_speed)
