@@ -845,6 +845,8 @@ def lqr_path_control(
     # Preview curvature (for logging)
     pc_lookahead = max(3.0, cfg.target_speed * 1.2)
     preview_curv = preview_curvature(augmented, nearest, pc_lookahead)
+    steer_lookahead = max(2.0, cfg.target_speed * 0.6)
+    preview_curv_steer = preview_curvature(augmented, nearest, steer_lookahead)
 
     # ---- LQR compute (split: feed-forward from Bézier, feedback from planned_path) -
     # Import here so core.py stays stdlib-compatible when LQR is unused
@@ -854,13 +856,16 @@ def lqr_path_control(
     pts = trajectory_table.points
     n_pts = min(3, len(pts))
     delta_ff = sum(p.steering_ff for p in pts[:n_pts]) / n_pts
-    v_table = min(p.speed_limit for p in pts[:max(5, len(pts) // 2)])
+    # Use speed at a small lookahead (skip the acceleration ramp at table start)
+    idx_v = min(5, len(pts) - 1)
+    v_table = pts[idx_v].speed_limit
 
     # Feedback: LQR state built from planned_path reference (consistent CTE/heading/curvature)
     e1 = cte
     e2 = heading_error
     e1_dot = max(state.prev_speed, 0.5) * math.sin(e2)
-    ref_yaw_rate = max(state.prev_speed, 0.5) * preview_curv
+    # Use preview_curv_steer (shorter lookahead) — avoids far-ahead max-curv jump
+    ref_yaw_rate = max(state.prev_speed, 0.5) * preview_curv_steer
     e2_dot = state.yaw_rate_filtered - ref_yaw_rate
 
     v_lqr = max(state.prev_speed, 0.5)
