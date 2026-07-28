@@ -136,13 +136,39 @@ def _discretise(A: np.ndarray, B: np.ndarray, dt: float) -> tuple:
 
 
 def _expm_pade(M: np.ndarray, order: int = 6) -> np.ndarray:
-    """Simple Pade-approximant matrix exponential — sufficient for 5×5."""
-    # This is a simplified expm for small matrices; use numpy's built-in if available
-    from scipy.linalg import expm
-    return expm(M)
-    # Note: if scipy is not available, a Taylor-series fallback can be used
-    # but scipy is almost always present alongside numpy in ROS2 environments.
-    # We use scipy.linalg.expm ONLY at init time (once), not online.
+    """Pade-approximant matrix exponential using scaling-and-squaring (pure NumPy).
+
+    Avoids scipy.linalg.expm to bypass NumPy 2.x / SciPy 1.x ABI incompatibility.
+    Sufficient for the 5×5 augmented discretisation matrix in _discretise().
+    Called only at LQR init time (once), not in the online control loop.
+    """
+    n = M.shape[0]
+    # --- scale so that ||M||_1 < 1 ---
+    norm = np.linalg.norm(M, ord=1)
+    s = max(0, int(np.ceil(np.log2(norm + 1e-15))))
+    A = M / (2.0 ** s)
+
+    # --- order-6 Pade coefficients ---
+    # R_66(z) = N_6(z) / D_6(z)  where both are cubic polynomials
+    # N_6 coefficients:  1/2 + (3/28)z + (1/84)z^2 + (1/1680)z^3
+    # D_6(z) = N_6(-z)   (diagonal Pade)
+    c = [1.0, 3.0 / 28.0, 1.0 / 84.0, 1.0 / 1680.0]
+
+    # Build numerator N = c0*I + c1*A + c2*A^2 + c3*A^3
+    I = np.eye(n, dtype=np.float64)
+    A2 = A @ A
+    A3 = A2 @ A
+    N = c[0] * I + c[1] * A + c[2] * A2 + c[3] * A3
+    D = c[0] * I - c[1] * A + c[2] * A2 - c[3] * A3  # N(-A)
+
+    # R = D^{-1} * N   (solving D*R = N is more stable than explicit inverse)
+    R = np.linalg.solve(D, N)
+
+    # --- un-scale by repeated squaring ---
+    for _ in range(s):
+        R = R @ R
+
+    return R
 
 
 # ---------------------------------------------------------------------------
