@@ -27,7 +27,7 @@ path_follower_node:
     use_sim_time: true
     origin_latitude: 30.0
     origin_longitude: 114.0
-    target_speed: 2.0
+    target_speed: 6.0
     lookahead_distance: 3.0
     kp_heading: 1.6
     max_steering_angle: 35.0
@@ -42,10 +42,10 @@ path_follower_node:
     adaptive_speed: true
     # LQR controller (used when controller_mode == "lqr")
     lqr_q_cte: 30.0
-    lqr_q_cte_dot: 1.8
-    lqr_q_heading: 6.0
+    lqr_q_cte_dot: 1.5
+    lqr_q_heading: 18.0
     lqr_q_yaw_rate: 0.5
-    lqr_r_steer: 10.0
+    lqr_r_steer: 13.0
     lqr_fb_limit_deg: 20.0
     # terrain-aware speed limits (simulated; future: /perception/terrain_signal)
     terrain_speed_1: 2.0    # downhill

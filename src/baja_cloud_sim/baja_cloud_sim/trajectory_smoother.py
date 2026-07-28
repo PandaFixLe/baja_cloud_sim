@@ -219,7 +219,7 @@ def _build_speed_profile(
     target_speed: float,
     a_lat_max: float = 3.0,
     a_accel: float = 2.0,
-    a_decel: float = 2.5,
+    a_decel: float = 3.5,
 ) -> List[float]:
     """Forward-backward speed profile respecting lateral-accel and accel/decel limits.
 
