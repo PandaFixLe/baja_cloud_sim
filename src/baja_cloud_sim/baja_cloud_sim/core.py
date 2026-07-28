@@ -747,6 +747,19 @@ def stanley_path_control(
     else:
         speed_factor = 1.0
 
+    # Directional-awareness speed gate: when the car faces away from the
+    # target bearing, aggressively reduce speed to prevent "runaway"
+    # acceleration while the steering turns the car around.
+    abs_heading_err = abs(heading_error)
+    if abs_heading_err > math.radians(135):   # >135° — nearly opposite direction
+        speed_factor *= 0.05
+    elif abs_heading_err > math.radians(105):  # >105° — facing well away
+        speed_factor *= 0.15
+    elif abs_heading_err > math.radians(75):   # >75° — significant misalignment
+        speed_factor *= 0.35
+    elif abs_heading_err > math.radians(45):   # >45° — moderate misalignment
+        speed_factor *= 0.60
+
     if cfg.adaptive_speed:
         adaptive_scale = 1.0 / (1.0 + preview_curv * 6.0)
         speed_factor *= max(0.30, adaptive_scale)
@@ -966,7 +979,7 @@ def lqr_path_control(
 
     # Feed-forward from near reference (only imminent curvature)
     n_pts = min(3, len(pts) - table_idx_steer)
-    delta_ff = sum(p.steering_ff for p in pts[table_idx_steer:table_idx_steer + n_pts]) / n_pts
+    delta_ff = -sum(p.steering_ff for p in pts[table_idx_steer:table_idx_steer + n_pts]) / n_pts
 
     # Speed from far reference (anticipate upcoming curves)
     idx_v = min(table_idx_speed + 2, len(pts) - 1)
@@ -1005,11 +1018,36 @@ def lqr_path_control(
     delta_step = clamp(filtered - state.prev_steering, -rate_rad * dt, rate_rad * dt)
     steering = state.prev_steering + delta_step
 
-    # ---- speed post-processing (low-pass, same as Stanley) ------------------------
-    if cfg.adaptive_speed:
-        raw_speed = v_cmd
+    # ---- speed post-processing (steering + heading gate + curvature, same as Stanley) ----
+    steering_deg = abs(math.degrees(steering))
+    if steering_deg > 25.0:
+        speed_factor = 0.35
+    elif steering_deg > 15.0:
+        speed_factor = 0.55
+    elif steering_deg > 8.0:
+        speed_factor = 0.75
+    elif steering_deg > 4.0:
+        speed_factor = 0.90
     else:
-        raw_speed = cfg.target_speed
+        speed_factor = 1.0
+
+    # Directional-awareness speed gate: when the car faces away from the
+    # target bearing, aggressively reduce speed to prevent "runaway"
+    # acceleration while the steering turns the car around.
+    abs_heading_err = abs(heading_error)
+    if abs_heading_err > math.radians(135):
+        speed_factor *= 0.05
+    elif abs_heading_err > math.radians(105):
+        speed_factor *= 0.15
+    elif abs_heading_err > math.radians(75):
+        speed_factor *= 0.35
+    elif abs_heading_err > math.radians(45):
+        speed_factor *= 0.60
+
+    if cfg.adaptive_speed:
+        raw_speed = v_cmd * speed_factor
+    else:
+        raw_speed = cfg.target_speed * speed_factor
     state.prev_speed += cfg.speed_alpha * (raw_speed - state.prev_speed)
 
     # ---- persist state ------------------------------------------------------------
