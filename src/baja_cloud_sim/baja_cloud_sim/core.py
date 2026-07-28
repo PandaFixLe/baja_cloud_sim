@@ -814,7 +814,19 @@ def lqr_path_control(
     """
     # ---- fallback -----------------------------------------------------------------
     if trajectory_table is None or lqr_ctrl is None or not trajectory_table:
+        tick = getattr(lqr_path_control, "_fb_tick", 0) + 1
+        lqr_path_control._fb_tick = tick
+        if tick == 1 or tick % 100 == 0:
+            reason = ("table is None" if trajectory_table is None else
+                      "lqr_ctrl is None" if lqr_ctrl is None else
+                      f"table empty (len={len(trajectory_table.points)})")
+            print(f"[LQR] FALLBACK (tick={tick}): {reason} → using Stanley")
         return stanley_path_control(current, yaw_navigation, path, config, state, dt)
+    # LQR is active — print recovery message if we just came out of fallback
+    fb_ticks = getattr(lqr_path_control, "_fb_tick", 0)
+    if fb_ticks > 0:
+        print(f"[LQR] RECOVERED: LQR active after {fb_ticks} fallback ticks")
+        lqr_path_control._fb_tick = 0
 
     cfg = config or StanleyControllerConfig()
     if state is None:

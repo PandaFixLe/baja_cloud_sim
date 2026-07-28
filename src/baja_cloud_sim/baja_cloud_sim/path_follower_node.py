@@ -173,9 +173,20 @@ class PathFollowerNode(Node):
                     f"total_arc={self.trajectory_table.total_length:.1f}m"
                 )
             elif self.trajectory_table is None:
+                n = len(self.path)
                 self.get_logger().warn(
-                    "Trajectory smoother returned None, falling back to Stanley",
+                    f"Smoother returned None (path={n} pts). "
+                    f"First pt: {self.path[0] if n>0 else 'N/A'}, "
+                    f"Last pt: {self.path[-1] if n>0 else 'N/A'}. "
+                    f"Falling back to Stanley.",
                     throttle_duration_sec=2.0,
+                )
+            else:
+                # Succeeded on subsequent calls — log periodically
+                self.get_logger().info(
+                    f"Smoother OK: table={len(self.trajectory_table.points)} pts, "
+                    f"arc={self.trajectory_table.total_length:.1f}m",
+                    throttle_duration_sec=5.0,
                 )
             # Publish smoothed path for RViz visualisation
             if self.smoothed_pub is not None and self.trajectory_table is not None:
