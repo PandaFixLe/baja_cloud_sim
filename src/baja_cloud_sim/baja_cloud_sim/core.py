@@ -854,7 +854,7 @@ def lqr_path_control(
         state.prev_yaw = yaw_math
         state.prev_cte = cte
         state.yaw_rate_filtered = 0.0
-        state.prev_speed = cfg.target_speed
+        state.prev_speed = 0.5  # start low, avoid gain mismatch / speed jump
         state.initialized = True
 
     # Yaw-rate estimate (filtered)
@@ -864,11 +864,12 @@ def lqr_path_control(
         + (1.0 - cfg.yaw_rate_alpha) * yaw_rate_raw
     )
 
-    # Preview curvature (for logging)
-    pc_lookahead = max(3.0, cfg.target_speed * 1.2)
-    preview_curv = preview_curvature(augmented, nearest, pc_lookahead)
+    # Preview curvature (for steering reference, consistent with planned_path)
     steer_lookahead = max(2.0, cfg.target_speed * 0.6)
     preview_curv_steer = preview_curvature(augmented, nearest, steer_lookahead)
+    # Long-lookahead preview for logging
+    pc_lookahead = max(3.0, cfg.target_speed * 1.2)
+    preview_curv = preview_curvature(augmented, nearest, pc_lookahead)
 
     # ---- LQR compute (split: feed-forward from Bézier, feedback from planned_path) -
     # Import here so core.py stays stdlib-compatible when LQR is unused
