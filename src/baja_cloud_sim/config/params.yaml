@@ -31,22 +31,26 @@ path_follower_node:
     lookahead_distance: 3.0
     kp_heading: 1.2
     max_steering_angle: 35.0
-    controller_mode: stanley
+    controller_mode: lqr
     kd_heading: 0.3
     k_stanley: 0.8
     k_cte_dot: 0.15
-    k_yaw_rate: 0.5
+    k_yaw_rate: 0.6
     steering_alpha: 0.6
-    max_steer_rate_deg: 8.0
+    max_steer_rate_deg: 15.0
     adaptive_steering: true
     adaptive_speed: true
     # LQR controller (used when controller_mode == "lqr")
-    lqr_q_cte: 15.0
-    lqr_q_cte_dot: 1.0
-    lqr_q_heading: 5.0
-    lqr_q_yaw_rate: 0.5
+    lqr_q_cte: 20.0
+    lqr_q_cte_dot: 1.8
+    lqr_q_heading: 12.0
+    lqr_q_yaw_rate: 0.4
     lqr_r_steer: 10.0
     lqr_fb_limit_deg: 15.0
+    # terrain-aware speed limits (simulated; future: /perception/terrain_signal)
+    terrain_speed_1: 2.0    # downhill
+    terrain_speed_2: 1.0    # speed bump
+    terrain_speed_3: 2.0    # tight curve
 
 actuator_adapter_node:
   ros__parameters:
