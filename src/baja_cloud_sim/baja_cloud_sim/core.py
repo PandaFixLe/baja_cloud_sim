@@ -861,7 +861,11 @@ def lqr_path_control(
     )
 
     if not state.initialized:
-        state.prev_heading_error = heading_error
+        # At startup the car is aligned with the straight lane — force
+        # heading_error=0 to prevent a stale/default yaw from injecting a
+        # bogus 90° error into the LQR state vector.
+        heading_error = 0.0
+        state.prev_heading_error = 0.0
         state.prev_steering = 0.0
         state.prev_yaw = yaw_math
         state.prev_cte = cte
@@ -869,8 +873,12 @@ def lqr_path_control(
         state.prev_speed = 0.5  # start low, avoid gain mismatch / speed jump
         state.initialized = True
 
-    # Yaw-rate estimate (filtered)
+    # Yaw-rate estimate (filtered), clamped to physical limits
+    # ±180°/s (π rad/s) is beyond any realistic Baja yaw rate —
+    # tightest curve (R=5m @ 6m/s) gives ω=v/R=1.2 rad/s=69°/s.
+    # This clamp catches IMU-initialisation spikes (-31.4 rad/s etc.).
     yaw_rate_raw = wrap_angle(yaw_math - state.prev_yaw) / max(dt, 1e-3)
+    yaw_rate_raw = clamp(yaw_rate_raw, -math.pi, math.pi)
     state.yaw_rate_filtered = (
         cfg.yaw_rate_alpha * state.yaw_rate_filtered
         + (1.0 - cfg.yaw_rate_alpha) * yaw_rate_raw

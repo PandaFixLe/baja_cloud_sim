@@ -97,6 +97,7 @@ class PathFollowerNode(Node):
         self.position = None
         self.prev_position = None   # for GPS speed estimation
         self.yaw_navigation = 0.0
+        self._yaw_received = False  # guard: don't control until first IMU yaw arrives
         self.path = []
         self.planner_feasible = False
         self.last_path_time = None
@@ -153,6 +154,7 @@ class PathFollowerNode(Node):
 
     def _yaw_callback(self, message: Float32) -> None:
         self.yaw_navigation = float(message.data)
+        self._yaw_received = True
 
     def _path_callback(self, message: PathMessage) -> None:
         self.path = [(pose.pose.position.x, pose.pose.position.y) for pose in message.poses]
@@ -269,7 +271,7 @@ class PathFollowerNode(Node):
         return math.hypot(dx, dy) / 0.05  # GPS at ~20 Hz, ~50 ms between samples
 
     def _control(self) -> None:
-        if self.position is None or not self.planner_feasible or len(self.path) < 2:
+        if self.position is None or not self._yaw_received or not self.planner_feasible or len(self.path) < 2:
             self._publish_stop()
             return
         if self.last_path_time is None or (self.get_clock().now() - self.last_path_time).nanoseconds > 400_000_000:
