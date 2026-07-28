@@ -870,6 +870,9 @@ def lqr_path_control(
 
     v_lqr = max(state.prev_speed, 0.5)
     K = lqr_ctrl.gains.lookup(v_lqr)
+    if not hasattr(state, "_k_printed"):
+        print(f"[LQR] v={v_lqr:.1f} K={[float(f'{x:.3f}') for x in K[0]]}")
+        state._k_printed = True
     delta_fb = -float(K[0, 0] * e1 + K[0, 1] * e1_dot + K[0, 2] * e2 + K[0, 3] * e2_dot)
     delta_fb = clamp(delta_fb, -math.radians(15.0), math.radians(15.0))
 
