@@ -13,6 +13,17 @@ from typing import List, Optional, Sequence, Tuple
 # Shared type alias with core.py
 Point = Tuple[float, float]
 
+# Throttle counter for diagnostic prints (shared across all TrajectorySmoother instances)
+_fail_count: int = 0
+
+
+def _throttled_print(msg: str, interval: int = 100) -> None:
+    """Print msg only once every `interval` calls (across all failures)."""
+    global _fail_count
+    _fail_count += 1
+    if _fail_count % interval == 1 or _fail_count == 1:
+        print(msg) if _fail_count == 1 else print(f"{msg}  [count={_fail_count}]")
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -281,14 +292,14 @@ class TrajectorySmoother:
         """
         n_pts = len(path)
         if n_pts < 4:
-            print(f"[Smoother] return None: path too short ({n_pts} points, need ≥4)")
+            _throttled_print(f"[Smoother] return None: path too short ({n_pts} pts)")
             return None
 
         # ---- select lookahead window ----
         window = list(path[:min(num_lookahead_pts, n_pts)])
         if len(window) < 4:
-            print(f"[Smoother] return None: window too short ({len(window)} points, "
-                  f"num_lookahead_pts={num_lookahead_pts}, n_pts={n_pts})")
+            _throttled_print(f"[Smoother] return None: window too short ({len(window)} pts, "
+                             f"num_lookahead_pts={num_lookahead_pts})")
             return None
 
         # ---- partition into overlapping segments ----
@@ -310,15 +321,15 @@ class TrajectorySmoother:
                 break
 
         if not bezier_segs:
-            print(f"[Smoother] return None: no Bézier segments (window={len(window)}, "
-                  f"segments={segments}, pts_per_seg={pts_per_seg})")
+            _throttled_print(f"[Smoother] return None: no Bézier segments "
+                             f"(window={len(window)}, segs={segments})")
             return None
 
         # ---- resample uniformly in arc-length ----
         total_arc = sum(seg.arc_length for seg in bezier_segs)
         if total_arc < ds_resample:
-            print(f"[Smoother] return None: total_arc={total_arc:.4f} < "
-                  f"ds_resample={ds_resample} (n_segs={len(bezier_segs)})")
+            _throttled_print(f"[Smoother] return None: total_arc={total_arc:.4f} < "
+                             f"ds_resample={ds_resample}")
             return None
 
         # Build cumulative arc-length boundaries for each segment

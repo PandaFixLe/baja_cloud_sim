@@ -157,40 +157,7 @@ class PathFollowerNode(Node):
     def _path_callback(self, message: PathMessage) -> None:
         self.path = [(pose.pose.position.x, pose.pose.position.y) for pose in message.poses]
         self.last_path_time = self.get_clock().now()
-
-        # LQR mode: regenerate trajectory table on each new path
-        if self.controller_mode == "lqr" and self.smoother is not None:
-            target_speed = float(self.get_parameter("target_speed").value)
-            generated_at = self.get_clock().now().nanoseconds * 1e-9
-            self.trajectory_table = self.smoother.generate(
-                self.path, target_speed=target_speed,
-                generated_at=generated_at,
-            )
-            if self.lqr_ctrl is None and self.trajectory_table is not None:
-                self.lqr_ctrl = LQRController(self.lqr_config)
-                self.get_logger().info(
-                    f"LQR controller initialised — table has {len(self.trajectory_table.points)} pts, "
-                    f"total_arc={self.trajectory_table.total_length:.1f}m"
-                )
-            elif self.trajectory_table is None:
-                n = len(self.path)
-                self.get_logger().warn(
-                    f"Smoother returned None (path={n} pts). "
-                    f"First pt: {self.path[0] if n>0 else 'N/A'}, "
-                    f"Last pt: {self.path[-1] if n>0 else 'N/A'}. "
-                    f"Falling back to Stanley.",
-                    throttle_duration_sec=2.0,
-                )
-            else:
-                # Succeeded on subsequent calls — log periodically
-                self.get_logger().info(
-                    f"Smoother OK: table={len(self.trajectory_table.points)} pts, "
-                    f"arc={self.trajectory_table.total_length:.1f}m",
-                    throttle_duration_sec=5.0,
-                )
-            # Publish smoothed path for RViz visualisation
-            if self.smoothed_pub is not None and self.trajectory_table is not None:
-                self._publish_smoothed_path()
+        # Trajectory table is built per control tick (sliding window from car position)
 
     def _status_callback(self, message: String) -> None:
         self.planner_feasible = message.data == "FEASIBLE"
@@ -315,6 +282,38 @@ class PathFollowerNode(Node):
             steering = float(command["steering"])
             target_x, target_y = float(command["target_x"]), float(command["target_y"])
         elif self.controller_mode == "lqr":
+            # --- sliding-window table: build from car position every tick ---
+            if self.smoother is not None and len(self.path) >= 4:
+                augmented = augment_path_for_cte(self.path)
+                car_nn = nearest_index(
+                    augmented,
+                    self.position[0], self.position[1],
+                    start=getattr(self, "_car_nn", 0),
+                )
+                self._car_nn = max(0, car_nn)
+                window = self.path[car_nn:car_nn + 8]
+                target_speed = float(self.get_parameter("target_speed").value)
+                generated_at = self.get_clock().now().nanoseconds * 1e-9
+                self.trajectory_table = self.smoother.generate(
+                    window, target_speed=target_speed,
+                    num_lookahead_pts=8, segments=2,
+                    generated_at=generated_at,
+                )
+                if self.lqr_ctrl is None and self.trajectory_table is not None:
+                    self.lqr_ctrl = LQRController(self.lqr_config)
+                    self.get_logger().info(
+                        f"LQR controller initialised — {len(self.trajectory_table.points)} pts, "
+                        f"arc={self.trajectory_table.total_length:.1f}m (sliding window)"
+                    )
+                elif self.trajectory_table is None:
+                    self.get_logger().warn(
+                        f"Smoother returned None (window={len(window)} pts from car_nn={car_nn})",
+                        throttle_duration_sec=2.0,
+                    )
+                # Publish smoothed path
+                if self.smoothed_pub is not None and self.trajectory_table is not None:
+                    self._publish_smoothed_path()
+
             command = lqr_path_control(
                 self.position, self.yaw_navigation, self.path,
                 self.stanley_config, self.stanley_state, dt=0.05,
