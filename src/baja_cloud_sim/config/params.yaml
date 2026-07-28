@@ -28,7 +28,7 @@ path_follower_node:
     origin_latitude: 30.0
     origin_longitude: 114.0
     target_speed: 6.0
-    lookahead_distance: 3.0
+    lookahead_distance: 5.0
     kp_heading: 1.2
     max_steering_angle: 35.0
     controller_mode: stanley
@@ -36,8 +36,8 @@ path_follower_node:
     k_stanley: 0.8
     k_cte_dot: 0.15
     k_yaw_rate: 0.5
-    steering_alpha: 0.6
-    max_steer_rate_deg: 8.0
+    steering_alpha: 0.8
+    max_steer_rate_deg: 20.0
     adaptive_steering: true
     adaptive_speed: true
     # LQR controller (used when controller_mode == "lqr")

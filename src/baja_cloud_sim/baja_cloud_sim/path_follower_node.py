@@ -106,21 +106,23 @@ class PathFollowerNode(Node):
         # LQR + Bézier trajectory smoother (used when controller_mode == "lqr")
         self.trajectory_table: Optional[TrajectoryTable] = None
         self.lqr_ctrl: Optional[LQRController] = None
-        if mode == "lqr":
+        if mode in ("stanley", "lqr"):
             self.smoother = TrajectorySmoother(wheelbase=1.43)
             self.smoothed_pub = self.create_publisher(PathMessage, "/smoothed_path", 10)
-            self.lqr_config = LQRConfig(
-                wheelbase=float(self.get_parameter("wheelbase").value),
-                q_cte=float(self.get_parameter("lqr_q_cte").value),
-                q_cte_dot=float(self.get_parameter("lqr_q_cte_dot").value),
-                q_heading=float(self.get_parameter("lqr_q_heading").value),
-                q_yaw_rate=float(self.get_parameter("lqr_q_yaw_rate").value),
-                r_steer=float(self.get_parameter("lqr_r_steer").value),
-                fb_limit_deg=float(self.get_parameter("lqr_fb_limit_deg").value),
-            )
-            self.get_logger().info(
-                "path_follower: mode=lqr (Bézier feed-forward + LQR feedback)"
-            )
+            if mode == "lqr":
+                self.lqr_config = LQRConfig(
+                    wheelbase=float(self.get_parameter("wheelbase").value),
+                    q_cte=float(self.get_parameter("lqr_q_cte").value),
+                    q_cte_dot=float(self.get_parameter("lqr_q_cte_dot").value),
+                    q_heading=float(self.get_parameter("lqr_q_heading").value),
+                    q_yaw_rate=float(self.get_parameter("lqr_q_yaw_rate").value),
+                    r_steer=float(self.get_parameter("lqr_r_steer").value),
+                    fb_limit_deg=float(self.get_parameter("lqr_fb_limit_deg").value),
+                )
+                self.get_logger().info("path_follower: mode=lqr (Bézier + LQR)")
+            else:
+                self.lqr_config = None
+                self.get_logger().info("path_follower: mode=stanley + smoother speed")
         else:
             self.smoother = None
             self.smoothed_pub = None
@@ -135,13 +137,11 @@ class PathFollowerNode(Node):
         self.create_subscription(String, "/planner/status", self._status_callback, 10)
         self.create_timer(0.05, self._control)
         if self.controller_mode == "stanley":
-            self.get_logger().info(
-                "path_follower: mode=stanley (Stanley + PD + dual-damping + low-pass + rate-limit)"
-            )
+            self.get_logger().info("path_follower: mode=stanley")
+        elif self.controller_mode == "lqr":
+            self.get_logger().info("path_follower: mode=lqr")
         else:
-            self.get_logger().info(
-                "path_follower: mode=legacy (fallback)"
-            )
+            self.get_logger().info("path_follower: mode=legacy")
 
     def _gps_callback(self, message: NavSatFix) -> None:
         x = (message.longitude - self.origin_lon) * 111320.0 * math.cos(math.radians(self.origin_lat))
@@ -156,7 +156,7 @@ class PathFollowerNode(Node):
         self.last_path_time = self.get_clock().now()
 
         # LQR mode: regenerate trajectory table on each new path
-        if self.controller_mode == "lqr" and self.smoother is not None:
+        if self.controller_mode in ("stanley", "lqr") and self.smoother is not None:
             target_speed = float(self.get_parameter("target_speed").value)
             generated_at = self.get_clock().now().nanoseconds * 1e-9
             self.trajectory_table = self.smoother.generate(
@@ -164,8 +164,12 @@ class PathFollowerNode(Node):
                 generated_at=generated_at,
             )
             if self.lqr_ctrl is None and self.trajectory_table is not None:
-                self.lqr_ctrl = LQRController(self.lqr_config)
-            elif self.trajectory_table is None:
+                try:
+                    self.lqr_ctrl = LQRController(self.lqr_config)
+                except Exception as e:
+                    self.get_logger().error(f"LQR init failed: {e}")
+                    self.lqr_ctrl = None
+            if self.trajectory_table is None:
                 self.get_logger().warn(
                     "Trajectory smoother returned None, falling back to Stanley",
                     throttle_duration_sec=2.0,
@@ -330,8 +334,9 @@ class PathFollowerNode(Node):
         # --- Frenet (s, l) ---
         augmented = augment_path_for_cte(self.path)
         nearest = nearest_index(
-            [(p["x"], p["y"]) for p in augmented],
-            self.position, hint=getattr(state, "last_nearest", 0),
+            augmented,
+            self.position[0], self.position[1],
+            start=state.last_nearest,
         )
         state.last_nearest = max(0, nearest - 4)
         l = signed_lateral(self.position, augmented[nearest])
@@ -393,7 +398,21 @@ class PathFollowerNode(Node):
             steering = float(command["steering"])
             target_x, target_y = float(command["target_x"]), float(command["target_y"])
         elif self.controller_mode == "lqr":
-            speed, steering, target_x, target_y = self._lqr_control_step()
+            # Stanley warmup: use Stanley below 1.0 m/s to avoid LQR singularity
+            if self.stanley_state is not None and (
+                not self.stanley_state.initialized
+                or self.stanley_state.prev_speed < 1.0
+            ):
+                cmd = stanley_path_control(
+                    self.position, self.yaw_navigation, self.path,
+                    self.stanley_config, self.stanley_state, dt=0.05,
+                )
+                self.stanley_state = cmd["state"]
+                speed = float(cmd["speed"])
+                steering = float(cmd["steering"])
+                target_x, target_y = float(cmd["target_x"]), float(cmd["target_y"])
+            else:
+                speed, steering, target_x, target_y = self._lqr_control_step()
         else:
             command = stanley_path_control(
                 self.position, self.yaw_navigation, self.path,
@@ -403,6 +422,12 @@ class PathFollowerNode(Node):
             speed = float(command["speed"])
             steering = float(command["steering"])
             target_x, target_y = float(command["target_x"]), float(command["target_y"])
+
+        # Smoother speed profile: physics-based speed ceiling
+        if self.trajectory_table is not None and len(self.trajectory_table.points) > 5:
+            s = self.trajectory_table.points[5].speed_limit
+            if s > 0.5:
+                speed = min(speed, s)
 
         # ---- safety overlay: two-level warning based on predicted deviation ----
         speed = self._compute_safety_speed(speed, steering)

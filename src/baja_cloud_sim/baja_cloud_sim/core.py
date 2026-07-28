@@ -544,7 +544,7 @@ class StanleyControllerConfig(ControllerConfig):
     adaptive_speed: bool = True
     preview_curv_boost_limit: float = 1.5
     preview_curv_boost_scale: float = 5.0
-    speed_alpha: float = 0.60
+    speed_alpha: float = 0.40
 
 
 @dataclass
@@ -814,9 +814,9 @@ def lqr_path_control(
     yaw_math = math.pi * 0.5 - yaw_navigation
 
     nearest = nearest_index(
-        [(p["x"], p["y"]) for p in augmented],
-        current,
-        hint=getattr(state, "last_nearest", 0),
+        augmented,
+        current[0], current[1],
+        start=getattr(state, "last_nearest", 0),
     )
     state.last_nearest = max(0, nearest - 4)
 
