@@ -341,8 +341,9 @@ class PathFollowerNode(Node):
         # --- Frenet (s, l) ---
         augmented = augment_path_for_cte(self.path)
         nearest = nearest_index(
-            [(p["x"], p["y"]) for p in augmented],
-            self.position, hint=getattr(state, "last_nearest", 0),
+            augmented,
+            self.position[0], self.position[1],
+            start=getattr(state, "last_nearest", 0),
         )
         state.last_nearest = max(0, nearest - 4)
         l = signed_lateral(self.position, augmented[nearest])
