@@ -846,21 +846,30 @@ def lqr_path_control(
     pc_lookahead = max(3.0, cfg.target_speed * 1.2)
     preview_curv = preview_curvature(augmented, nearest, pc_lookahead)
 
-    # ---- build vehicle state for LQR ----------------------------------------------
+    # ---- LQR compute (split: feed-forward from Bézier, feedback from planned_path) -
     # Import here so core.py stays stdlib-compatible when LQR is unused
     from .lqr_controller import VehicleState  # type: ignore[import-untyped]
 
-    vehicle = VehicleState(
-        speed=max(state.prev_speed, 0.5),
-        cte=cte,
-        heading_error=heading_error,
-        yaw_rate=state.yaw_rate_filtered,
-    )
+    # Feed-forward: take nearest table points for curvature-derived steering + speed
+    pts = trajectory_table.points
+    n_pts = min(3, len(pts))
+    delta_ff = sum(p.steering_ff for p in pts[:n_pts]) / n_pts
+    v_table = min(p.speed_limit for p in pts[:max(5, len(pts) // 2)])
 
-    # ---- LQR compute --------------------------------------------------------------
-    v_cmd, delta_raw, delta_ff, delta_fb = lqr_ctrl.compute(
-        trajectory_table, vehicle, target_speed=cfg.target_speed,
-    )
+    # Feedback: LQR state built from planned_path reference (consistent CTE/heading/curvature)
+    e1 = cte
+    e2 = heading_error
+    e1_dot = max(state.prev_speed, 0.5) * math.sin(e2)
+    ref_yaw_rate = max(state.prev_speed, 0.5) * preview_curv
+    e2_dot = state.yaw_rate_filtered - ref_yaw_rate
+
+    v_lqr = max(state.prev_speed, 0.5)
+    K = lqr_ctrl.gains.lookup(v_lqr)
+    delta_fb = -float(K[0, 0] * e1 + K[0, 1] * e1_dot + K[0, 2] * e2 + K[0, 3] * e2_dot)
+    delta_fb = clamp(delta_fb, -math.radians(15.0), math.radians(15.0))
+
+    delta_raw = delta_ff + delta_fb
+    v_cmd = min(v_table, cfg.target_speed)
 
     # ---- steering post-processing (same pipeline as Stanley) ----------------------
     max_steer = math.radians(cfg.max_steering_deg)
