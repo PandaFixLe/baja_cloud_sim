@@ -947,28 +947,29 @@ def lqr_path_control(
     # Import here so core.py stays stdlib-compatible when LQR is unused
     from .lqr_controller import VehicleState  # type: ignore[import-untyped]
 
-    # ---- s-coordinate alignment with predictive lookahead ----
+    # ---- s-coordinate alignment with dual-horizon predictive lookahead ----
     # Table is built from path[nearest:nearest+8], so table s=0 ≈ augmented[nearest].
     # Project car onto planned-path s, then advance by speed-profile-integrated
-    # lookahead to compensate for planner→control latency.
+    # lookahead.  Two horizons:
+    #   near (~50ms) → steering feed-forward — don't pre-steer for distant curves
+    #   far  (~150ms) → speed reference — anticipate curves for braking
     pts = trajectory_table.points
     s_window_start = augmented[nearest].get("s", 0.0)
-    s_car_on_path = s_window_start  # car is at window start (nearest ≈ car_nn)
-    s_car_in_table = max(0.0, s_car_on_path - s_window_start)
+    s_car_in_table = max(0.0, s_window_start - s_window_start)  # always ≈ 0
 
-    # Predictive lookahead: integrate speed profile to find Δs for lookahead_time_s
     lookahead_t = getattr(cfg, "lookahead_time_s", 0.15)
-    ds_lookahead = _lookahead_s(pts, 0, lookahead_t)
-    s_ref = s_car_in_table + ds_lookahead
+    ds_near = _lookahead_s(pts, 0, lookahead_t * 0.33)   # ~50ms for steering
+    ds_far  = _lookahead_s(pts, 0, lookahead_t)            # ~150ms for speed
 
-    # Find table_idx by arc-length (pts[].s is monotonic, linear scan is O(n) on ~50 pts)
-    table_idx = _s_to_index(pts, s_ref)
+    table_idx_steer = _s_to_index(pts, s_car_in_table + ds_near)
+    table_idx_speed = _s_to_index(pts, s_car_in_table + ds_far)
 
-    # Feed-forward: average steering_ff over next few points from reference
-    n_pts = min(3, len(pts) - table_idx)
-    delta_ff = sum(p.steering_ff for p in pts[table_idx:table_idx + n_pts]) / n_pts
-    # Use speed at a small lookahead ahead of reference (skip acceleration ramp)
-    idx_v = min(table_idx + 5, len(pts) - 1)
+    # Feed-forward from near reference (only imminent curvature)
+    n_pts = min(3, len(pts) - table_idx_steer)
+    delta_ff = sum(p.steering_ff for p in pts[table_idx_steer:table_idx_steer + n_pts]) / n_pts
+
+    # Speed from far reference (anticipate upcoming curves)
+    idx_v = min(table_idx_speed + 2, len(pts) - 1)
     v_table = pts[idx_v].speed_limit
 
     # Feedback: LQR state built from planned_path reference (consistent CTE/heading/curvature)
