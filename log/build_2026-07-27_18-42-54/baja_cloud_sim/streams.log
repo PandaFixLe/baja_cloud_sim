@@ -1,0 +1,25 @@
+[0.581s] Invoking command in '/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim': PYTHONPATH=/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build --no-deps symlink_data
+[0.730s] running develop
+[0.811s] running egg_info
+[0.812s] writing baja_cloud_sim.egg-info/PKG-INFO
+[0.812s] writing dependency_links to baja_cloud_sim.egg-info/dependency_links.txt
+[0.812s] writing entry points to baja_cloud_sim.egg-info/entry_points.txt
+[0.812s] writing requirements to baja_cloud_sim.egg-info/requires.txt
+[0.812s] writing top-level names to baja_cloud_sim.egg-info/top_level.txt
+[0.813s] reading manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+[0.814s] writing manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+[0.815s] running build_ext
+[0.815s] Creating /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja-cloud-sim.egg-link (link to .)
+[0.815s] Installing actuator_adapter script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.816s] Installing evaluator script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.816s] Installing frenet_planner script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.816s] Installing generate_scenario script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.816s] Installing path_follower script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.816s] Installing truth_perception script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.816s] Installing video_recorder script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.816s] 
+[0.816s] Installed /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim
+[0.817s] running symlink_data
+[0.817s] symbolically linking /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/config/params.yaml -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+[0.817s] error: [Errno 17] File exists: '/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/config/params.yaml' -> '/home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config/params.yaml'
+[0.830s] Invoked command in '/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim' returned '1': PYTHONPATH=/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build --no-deps symlink_data

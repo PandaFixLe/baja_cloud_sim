@@ -1,0 +1,23 @@
+running develop
+running egg_info
+writing baja_cloud_sim.egg-info/PKG-INFO
+writing dependency_links to baja_cloud_sim.egg-info/dependency_links.txt
+writing entry points to baja_cloud_sim.egg-info/entry_points.txt
+writing requirements to baja_cloud_sim.egg-info/requires.txt
+writing top-level names to baja_cloud_sim.egg-info/top_level.txt
+reading manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+writing manifest file 'baja_cloud_sim.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja-cloud-sim.egg-link (link to .)
+Installing actuator_adapter script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing evaluator script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing frenet_planner script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing generate_scenario script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing path_follower script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing truth_perception script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+Installing video_recorder script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+
+Installed /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim
+running symlink_data
+symbolically linking /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/package.xml -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim
+error: [Errno 17] File exists: '/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/package.xml' -> '/home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/package.xml'
