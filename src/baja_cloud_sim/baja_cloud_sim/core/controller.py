@@ -183,8 +183,8 @@ def compute_lqr_control(
             state = estimate_lqr_state(position, yaw, odom_velocity, yaw_rate,
                                        reference, e_y_int=lqr_e_y_int)
             # State layout: [e_y_int?, e_y, e_y_dot, e_psi, e_psi_dot]
-            # Index 0 is e_y_int when len(cfg.Q)==5, otherwise e_y.
-            use_int = len(cfg.Q) == 5
+            # Index 0 is e_y_int when len(lqr_cfg.Q)==5, otherwise e_y.
+            use_int = len(lqr_cfg.Q) == 5
             i_ey = 1 if use_int else 0
             i_eydot = 2 if use_int else 1
             i_epsi = 3 if use_int else 2
