@@ -180,11 +180,12 @@ def compute_lqr_control(
     if actual_velocity >= lqr_cfg.lqr_min_velocity and reference.get("kappa") is not None:
         K = lqr_controller.get_gain(v_op, lqr_cfg)
         if K is not None:
+            use_int = len(lqr_cfg.Q) == 5
             state = estimate_lqr_state(position, yaw, odom_velocity, yaw_rate,
                                        reference, e_y_int=lqr_e_y_int)
+            if not use_int:
+                state = state[1:]  # drop ∫e_y → 4-state [e_y, e_y_dot, e_psi, e_psi_dot]
             # State layout: [e_y_int?, e_y, e_y_dot, e_psi, e_psi_dot]
-            # Index 0 is e_y_int when len(lqr_cfg.Q)==5, otherwise e_y.
-            use_int = len(lqr_cfg.Q) == 5
             i_ey = 1 if use_int else 0
             i_eydot = 2 if use_int else 1
             i_epsi = 3 if use_int else 2
