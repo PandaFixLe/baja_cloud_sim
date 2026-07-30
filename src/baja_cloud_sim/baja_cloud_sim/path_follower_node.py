@@ -381,20 +381,22 @@ class PathFollowerNode(Node):
         elif self._ctrl_state == _ControlState.SLOWDOWN:
             target_speed = min(target_speed, 1.0)
 
-        # Heading-recovery speed gate: when the vehicle is significantly
-        # misaligned, cap speed so it can recover heading at low speed
-        # (tighter turn radius, higher LQR gains, less overshoot).
+        # Heading-recovery speed gate: only active when the vehicle is
+        # actually off-track.  On a curve the reference yaw naturally
+        # differs from the vehicle yaw — that is normal tracking, not
+        # a recovery situation.
         heading_err = float(command.get("heading_error", 0.0))
-        if abs(heading_err) > math.radians(25.0):
-            target_speed = min(target_speed, 0.5)   # crawl
-        elif abs(heading_err) > math.radians(12.0):
-            target_speed = min(target_speed, 1.0)   # slow
-        elif abs(heading_err) > math.radians(5.0):
-            target_speed = min(target_speed, 1.5)   # moderate
+        cross_track = float(command.get("e_y", 0.0))
+        off_track = abs(cross_track) > 0.20
+        if off_track and abs(heading_err) > math.radians(25.0):
+            target_speed = min(target_speed, 0.5)
+        elif off_track and abs(heading_err) > math.radians(12.0):
+            target_speed = min(target_speed, 1.0)
+        elif off_track and abs(heading_err) > math.radians(5.0):
+            target_speed = min(target_speed, 1.5)
 
-        # Speed rate limiter: prevent sudden acceleration after
-        # straightening (which would make the next turn harder).
-        MAX_SPEED_STEP = 0.05   # +1.0 m/s² gentle acceleration
+        # Speed rate limiter
+        MAX_SPEED_STEP = 0.075  # +1.5 m/s² gentle acceleration
         MAX_SPEED_DECEL = 0.25  # −5.0 m/s² deceleration (emergency stop)
         delta_spd = target_speed - self._prev_target_speed
         clamped_spd = max(-MAX_SPEED_DECEL, min(MAX_SPEED_STEP, delta_spd))
