@@ -524,16 +524,14 @@ def _derate_speed_profile(
                 derated[i] = min(derated[i],
                                  terrain_min_speed + (1.0 - ratio) * (derated[i] - terrain_min_speed))
 
-    # ── Re-run feasibility passes after derating ──
-    # Derating clamps individual points; the forward/backward passes
-    # below propagate those clamps so the speed profile is physically
-    # realisable (respects accel/decel limits).
-    for i in range(1, len(derated)):
-        ds = arc[i] - arc[i - 1]
-        if ds <= 0.0:
-            continue
-        v_limit = math.sqrt(max(0.0, derated[i - 1] ** 2 + 2.0 * cfg.max_decel * ds))
-        derated[i] = min(derated[i], v_limit)
+    # ── Re-run backward feasibility pass after derating ──
+    # Derating clamps individual points (terrain bumps, obstacles).
+    # The backward pass propagates those clamps rearward through the
+    # acceleration constraint so the speed profile includes a physically
+    # realisable deceleration zone before each low-speed feature.
+    # (The forward decel pass is NOT re-run — it would force an
+    #  artificial deceleration from the first point's max_speed,
+    #  dropping the target below cruise after a few metres.)
     for i in range(len(derated) - 2, -1, -1):
         ds = arc[i + 1] - arc[i]
         if ds <= 0.0:
