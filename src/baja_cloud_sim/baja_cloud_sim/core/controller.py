@@ -144,7 +144,14 @@ def compute_lqr_control(
         K = lqr_controller.get_gain(v_op, lqr_cfg)
         if K is not None:
             state = estimate_lqr_state(position, yaw, odom_velocity, yaw_rate, reference)
-            delta_fb = -float(K @ state)
+            # Deadband: if the vehicle is already self-correcting
+            # (small error + velocity pointing inward), let physics do
+            # the work — only feedforward steering is applied.
+            e_y, e_y_dot = state[0], state[1]
+            if abs(e_y) < 0.15 and abs(e_y_dot) < 0.3:
+                delta_fb = 0.0
+            else:
+                delta_fb = -float(K @ state)
             delta_ff = compute_feedforward(reference.get("kappa", 0.0), v_op, lqr_cfg)
             steering = clamp(delta_fb + delta_ff, -lqr_cfg.max_steering, lqr_cfg.max_steering)
             return {"speed": float(v_op), "steering": steering,

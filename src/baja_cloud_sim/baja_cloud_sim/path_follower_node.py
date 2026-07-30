@@ -11,6 +11,7 @@ from geometry_msgs.msg import PointStamped
 from nav_msgs.msg import Odometry, Path as PathMessage
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Float32, String
 from visualization_msgs.msg import MarkerArray
 
@@ -139,7 +140,7 @@ class PathFollowerNode(Node):
         self._terrain_slope_threshold = float(self.get_parameter("terrain_slope_threshold").value)
         self.declare_parameter("terrain_min_speed", 1.0)
         self._terrain_min_speed = float(self.get_parameter("terrain_min_speed").value)
-        self._centerline_z: dict = {}  # s → z lookup
+        self._centerline_pts: list = []  # [(x,y,z), ...] for nearest-neighbour lookup
 
         self.command_pub = self.create_publisher(AckermannDriveStamped, "/cmd_control", 10)
         self.lookahead_pub = self.create_publisher(PointStamped, "/lookahead_point", 10)
@@ -149,7 +150,10 @@ class PathFollowerNode(Node):
         self.create_subscription(String, "/planner/status", self._status_callback, 10)
         self.create_subscription(Odometry, "/ground_truth/odom", self._odom_callback, 20)
         self.create_subscription(MarkerArray, "/obstacle_markers", self._obstacle_callback, 10)
-        self.create_subscription(PathMessage, "/reference_centerline", self._centerline_callback, 10)
+        _latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.create_subscription(PathMessage, "/reference_centerline",
+                                 self._centerline_callback, _latched)
         self._obstacles: list = []  # world-frame obstacle dicts
         self.create_timer(0.05, self._control)
         mode = "LQR 4x4" if self._enable_lqr else "Pure Pursuit"
@@ -198,18 +202,11 @@ class PathFollowerNode(Node):
         self._obstacles = obstacles
 
     def _centerline_callback(self, message: PathMessage) -> None:
-        """Build s→z lookup from reference centreline for terrain derating."""
-        z_map = {}
-        cumulative = 0.0
-        prev = None
-        for pose in message.poses:
-            x, y, z = pose.pose.position.x, pose.pose.position.y, pose.pose.position.z
-            if prev is not None:
-                cumulative += math.hypot(x - prev[0], y - prev[1])
-            z_map[cumulative] = z
-            prev = (x, y)
-        if z_map:
-            self._centerline_z = z_map
+        """Store (x, y, z) for nearest-neighbour terrain derating."""
+        pts = [(p.pose.position.x, p.pose.position.y, p.pose.position.z)
+               for p in message.poses]
+        if pts:
+            self._centerline_pts = pts
 
     def _path_callback(self, message: PathMessage) -> None:
         self.path = [(pose.pose.position.x, pose.pose.position.y) for pose in message.poses]
@@ -255,19 +252,13 @@ class PathFollowerNode(Node):
         self._path_yaws = yaws
 
         self._speed_profile = plan_speed_profile(curvatures, arc, self._speed_cfg)
-        # ── Clearance-aware derating (Phase 4+) ──
-        # Reduce speed near obstacles regardless of path curvature.
-        if self._obstacles:
-            self._speed_profile = _derate_by_clearance(
-                path, self._speed_profile, self._obstacles,
-                self._speed_cfg, self._desired_clearance,
-            )
-        # ── Terrain-aware derating ──
-        if self._centerline_z:
-            self._speed_profile = _derate_by_terrain(
-                arc, self._speed_profile, self._centerline_z,
-                self._terrain_slope_threshold, self._terrain_min_speed,
-            )
+        # ── Merged derating (clearance + terrain, single pass) ──
+        self._speed_profile = _derate_speed_profile(
+            path, arc, self._speed_profile, self._speed_cfg,
+            self._obstacles, self._desired_clearance,
+            self._centerline_pts,
+            self._terrain_slope_threshold, self._terrain_min_speed,
+        )
         self._path_arc_lengths = arc
 
     def _status_callback(self, message: String) -> None:
@@ -368,9 +359,12 @@ class PathFollowerNode(Node):
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = "base_link"
         message.drive.speed = float(target_speed)
-        # Phase 3.2: EMA low-pass on steering to avoid aggressive corrections
+        # Steering rate limiter: max 4° per step (0.05 s) → ~80°/s
+        MAX_STEER_STEP = math.radians(4.0)
         raw_steer = float(command["steering"])
-        self._prev_steering = 0.7 * raw_steer + 0.3 * self._prev_steering
+        delta = raw_steer - self._prev_steering
+        clamped_delta = max(-MAX_STEER_STEP, min(MAX_STEER_STEP, delta))
+        self._prev_steering += clamped_delta
         message.drive.steering_angle = self._prev_steering
         self.command_pub.publish(message)
 
@@ -412,56 +406,52 @@ def _moving_average(values, window: int):
     return out
 
 
-def _derate_by_clearance(
-    path, speeds, obstacles, cfg: SpeedProfileConfig, desired_clearance: float,
+def _derate_speed_profile(
+    path, arc, speeds, cfg: SpeedProfileConfig,
+    obstacles, desired_clearance: float,
+    centerline_pts, slope_threshold: float, terrain_min_speed: float,
 ) -> List[float]:
-    """Scale target speed down proportionally to obstacle proximity.
+    """Single-pass speed derating: clearance + terrain → min() of all constraints.
 
-    v_out = min_speed_obstacle + (c / desired_clearance) * (v_in - min_speed_obstacle)
+    Clearance: v → min_speed_obstacle + (c/desired) * (v_in - min_speed_obstacle)
+    Terrain:   v → terrain_min_speed when |dz/ds| > slope_threshold
     """
-    if not obstacles or desired_clearance <= 0.0:
-        return speeds
     from .core import point_to_oriented_box_clearance
     derated = list(speeds)
-    half_w = cfg.max_lateral_accel  # not used — safety_margin handled by inflate
-    for i, (px, py) in enumerate(path):
-        min_c = float("inf")
-        for obs in obstacles:
-            c = point_to_oriented_box_clearance((px, py), obs, 0.0, 0.75)
-            if c < min_c:
-                min_c = c
-        if min_c < desired_clearance:
-            ratio = max(0.0, min_c / desired_clearance)
-            derated[i] = max(cfg.min_speed_obstacle,
-                             cfg.min_speed_obstacle + ratio * (speeds[i] - cfg.min_speed_obstacle))
-    return derated
 
+    # ── clearance derating ──
+    if obstacles and desired_clearance > 0.0:
+        for i, (px, py) in enumerate(path):
+            min_c = float("inf")
+            for obs in obstacles:
+                c = point_to_oriented_box_clearance((px, py), obs, 0.0, 0.75)
+                if c < min_c:
+                    min_c = c
+            if min_c < desired_clearance:
+                ratio = max(0.0, min_c / desired_clearance)
+                derated[i] = max(cfg.min_speed_obstacle,
+                                 cfg.min_speed_obstacle + ratio * (speeds[i] - cfg.min_speed_obstacle))
 
-def _derate_by_terrain(
-    arc: list, speeds: list, z_map: dict,
-    slope_threshold: float, min_speed: float,
-) -> list:
-    """Scale target speed down when terrain gradient exceeds threshold."""
-    if not z_map or len(arc) < 2:
-        return speeds
-    z_sorted = sorted(z_map.items())  # [(s, z), ...]
-    if len(z_sorted) < 2:
-        return speeds
-    derated = list(speeds)
-    for i, s_val in enumerate(arc):
-        # find bracketing s-values in z_map
-        lo, hi = 0, len(z_sorted) - 1
-        while lo < hi - 1:
-            mid = (lo + hi) // 2
-            if z_sorted[mid][0] <= s_val:
-                lo = mid
-            else:
-                hi = mid
-        ds = z_sorted[hi][0] - z_sorted[lo][0]
-        if ds > 0.01:
-            slope = abs(z_sorted[hi][1] - z_sorted[lo][1]) / ds
+    # ── terrain derating (nearest-neighbour z lookup) ──
+    if centerline_pts and len(centerline_pts) > 1 and len(arc) >= 2:
+        # pre-compute dz per metre along centreline
+        cl_dz = [0.0]
+        for k in range(1, len(centerline_pts)):
+            ds = math.hypot(centerline_pts[k][0] - centerline_pts[k-1][0],
+                            centerline_pts[k][1] - centerline_pts[k-1][1])
+            dz = abs(centerline_pts[k][2] - centerline_pts[k-1][2]) / max(ds, 0.01)
+            cl_dz.append(dz)
+        for i, (px, py) in enumerate(path):
+            # find nearest centreline point by xy distance
+            best_d2, best_k = float("inf"), 0
+            for k, (cx, cy, _cz) in enumerate(centerline_pts):
+                d2 = (px - cx) ** 2 + (py - cy) ** 2
+                if d2 < best_d2:
+                    best_d2, best_k = d2, k
+            slope = cl_dz[min(best_k, len(cl_dz) - 1)]
             if slope > slope_threshold:
-                derated[i] = min(derated[i], min_speed)
+                derated[i] = min(derated[i], terrain_min_speed)
+
     return derated
 
 
