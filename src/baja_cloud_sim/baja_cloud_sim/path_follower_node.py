@@ -381,6 +381,17 @@ class PathFollowerNode(Node):
         elif self._ctrl_state == _ControlState.SLOWDOWN:
             target_speed = min(target_speed, 1.0)
 
+        # Heading-recovery speed gate: when the vehicle is significantly
+        # misaligned, cap speed so it can recover heading at low speed
+        # (tighter turn radius, higher LQR gains, less overshoot).
+        heading_err = float(command.get("heading_error", 0.0))
+        if abs(heading_err) > math.radians(25.0):
+            target_speed = min(target_speed, 0.5)   # crawl
+        elif abs(heading_err) > math.radians(12.0):
+            target_speed = min(target_speed, 1.0)   # slow
+        elif abs(heading_err) > math.radians(5.0):
+            target_speed = min(target_speed, 1.5)   # moderate
+
         # Speed rate limiter: prevent sudden acceleration after
         # straightening (which would make the next turn harder).
         MAX_SPEED_STEP = 0.05   # +1.0 m/s² gentle acceleration
