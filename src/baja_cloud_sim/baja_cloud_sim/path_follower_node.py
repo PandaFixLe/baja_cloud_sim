@@ -536,7 +536,7 @@ def _derate_speed_profile(
         ds = arc[i + 1] - arc[i]
         if ds <= 0.0:
             continue
-        v_limit = math.sqrt(max(0.0, derated[i + 1] ** 2 + 2.0 * cfg.max_accel * ds))
+        v_limit = math.sqrt(max(0.0, derated[i + 1] ** 2 + 2.0 * (-cfg.max_decel) * ds))
         derated[i] = min(derated[i], v_limit)
 
     return derated
