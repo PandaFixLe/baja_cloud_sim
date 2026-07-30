@@ -110,6 +110,7 @@ class PathFollowerNode(Node):
         )
         self._current_speed = 0.0
         self._prev_steering = 0.0  # low-pass filter state (Phase 3.2)
+        self._prev_target_speed = 0.0  # speed rate-limiter state
         self.declare_parameter("enable_lqr", True)
         self._enable_lqr = bool(self.get_parameter("enable_lqr").value)
         self.planner_feasible = False
@@ -379,6 +380,15 @@ class PathFollowerNode(Node):
             self._prev_steering = 0.0  # also zero steering on stop
         elif self._ctrl_state == _ControlState.SLOWDOWN:
             target_speed = min(target_speed, 1.0)
+
+        # Speed rate limiter: prevent sudden acceleration after
+        # straightening (which would make the next turn harder).
+        MAX_SPEED_STEP = 0.10   # +2.0 m/s² acceleration
+        MAX_SPEED_DECEL = 0.25  # −5.0 m/s² deceleration (emergency stop)
+        delta_spd = target_speed - self._prev_target_speed
+        clamped_spd = max(-MAX_SPEED_DECEL, min(MAX_SPEED_STEP, delta_spd))
+        self._prev_target_speed += clamped_spd
+        target_speed = self._prev_target_speed
 
         message = AckermannDriveStamped()
         message.header.stamp = self.get_clock().now().to_msg()
