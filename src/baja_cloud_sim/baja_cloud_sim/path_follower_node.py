@@ -113,6 +113,7 @@ class PathFollowerNode(Node):
         self.declare_parameter("enable_lqr", True)
         self._enable_lqr = bool(self.get_parameter("enable_lqr").value)
         self.planner_feasible = False
+        self._planner_status_received = False  # guards startup state-machine
         self.last_path_time = None
         self._last_valid_path = []  # freewheel buffer
         self._infeasible_count = 0
@@ -277,6 +278,7 @@ class PathFollowerNode(Node):
 
     def _status_callback(self, message: String) -> None:
         self.planner_feasible = message.data == "FEASIBLE"
+        self._planner_status_received = True
 
     def _publish_stop(self) -> None:
         message = AckermannDriveStamped()
@@ -293,9 +295,12 @@ class PathFollowerNode(Node):
 
         # Freewheel: if planner reports infeasible, keep using the last
         # valid path for up to ~300 ms (6 cycles @ 20 Hz) before stopping.
-        if not self.planner_feasible or len(self.path) < 2:
+        # Before the first planner status arrives the vehicle is still
+        # stationary — don't count those cycles as infeasible.
+        if self._planner_status_received and (
+                not self.planner_feasible or len(self.path) < 2):
             self._infeasible_count += 1
-        else:
+        elif self.planner_feasible and len(self.path) >= 2:
             self._infeasible_count = 0
             self._consecutive_feasible += 1
 
