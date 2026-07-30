@@ -60,7 +60,7 @@ class LQRConfig:
     R: float = 2.0
     v_norm: float = 1.5
     understeer_gradient: float = 0.0
-    dt: float = 0.02
+    dt: float = 0.05  # must match the control-loop timer period (path_follower_node._control)
     lqr_min_velocity: float = 0.5
     dare_solve_interval: int = 10
     velocity_recompute_threshold: float = 0.5

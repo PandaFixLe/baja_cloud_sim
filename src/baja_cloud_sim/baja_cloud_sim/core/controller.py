@@ -91,12 +91,21 @@ def build_lqr_matrices(velocity: float, cfg: LQRConfig) -> Tuple[np.ndarray, np.
 
 def _solve_dare(velocity: float, cfg: LQRConfig) -> Optional[np.ndarray]:
     try:
-        from scipy.linalg import solve_discrete_are
+        from scipy.linalg import expm, solve_discrete_are
     except ImportError:
         return None
     A, B = build_lqr_matrices(velocity, cfg)
-    A_d = np.eye(4) + A * cfg.dt
-    B_d = B * cfg.dt
+    n = A.shape[0]
+    # Zero-order-hold discretisation via Van Loan (matrix exponential).
+    # Forward Euler (I + A·dt) is unconditionally unstable for this plant
+    # because |a₂₂·dt| > 1 at all speeds below ≈4.8 m/s.
+    dt = cfg.dt
+    M = np.zeros((n + 1, n + 1), dtype=np.float64)
+    M[:n, :n] = A * dt
+    M[:n, n] = B.squeeze() * dt
+    expM = expm(M)
+    A_d = expM[:n, :n]
+    B_d = expM[:n, n].reshape(-1, 1)
     R_eff = cfg.R * (1.0 + (velocity / cfg.v_norm) ** 2)
     try:
         P = solve_discrete_are(A_d, B_d, np.diag(cfg.Q), np.array([[R_eff]], dtype=np.float64))
@@ -144,12 +153,22 @@ def compute_lqr_control(
         K = lqr_controller.get_gain(v_op, lqr_cfg)
         if K is not None:
             state = estimate_lqr_state(position, yaw, odom_velocity, yaw_rate, reference)
-            # Deadband: if the vehicle is already self-correcting
-            # (small error + velocity pointing inward), let physics do
-            # the work — only feedforward steering is applied.
-            e_y, e_y_dot = state[0], state[1]
-            if abs(e_y) < 0.15 and abs(e_y_dot) < 0.3:
-                delta_fb = 0.0
+            # Soft deadband: scale lateral gains down when lateral errors are
+            # small, but NEVER zero yaw correction — yaw misalignment always
+            # gets corrected to prevent overshoot oscillation.
+            e_y, e_y_dot, e_psi, e_psi_dot = state[0], state[1], state[2], state[3]
+            lat_in_deadband = abs(e_y) < 0.10 and abs(e_y_dot) < 0.2
+            yaw_in_deadband = abs(e_psi) < 0.02 and abs(e_psi_dot) < 0.05
+            if lat_in_deadband and yaw_in_deadband:
+                delta_fb = 0.0  # all errors negligible — pure feedforward
+            elif lat_in_deadband:
+                # Lateral small but yaw misaligned — keep yaw correction,
+                # smoothly scale lateral gains toward zero.
+                lat_scale = max(0.0, min(1.0, abs(e_y) / 0.10))
+                K_scaled = K.copy()
+                K_scaled[0, 0] *= lat_scale   # e_y gain
+                K_scaled[0, 1] *= lat_scale   # e_y_dot gain
+                delta_fb = -float(K_scaled @ state)
             else:
                 delta_fb = -float(K @ state)
             delta_ff = compute_feedforward(reference.get("kappa", 0.0), v_op, lqr_cfg)

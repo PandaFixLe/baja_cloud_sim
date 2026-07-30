@@ -33,7 +33,7 @@ path_follower_node:
     min_speed_obstacle: 2.0
     lqr_R: 2.0
     lqr_v_norm: 1.5
-    lqr_Q: [3.0, 4.0, 1.5, 2.0]
+    lqr_Q: [3.0, 3.0, 3.0, 2.0]
     terrain_slope_threshold: 0.06
     terrain_min_speed: 1.0
 

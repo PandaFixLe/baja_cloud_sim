@@ -360,7 +360,12 @@ class PathFollowerNode(Node):
         message.header.frame_id = "base_link"
         message.drive.speed = float(target_speed)
         # Steering rate limiter: max 4° per step (0.05 s) → ~80°/s
+        # Allow up to 2× rate when yaw error is large (>5°), so the
+        # vehicle can recover heading quickly after a disturbance.
         MAX_STEER_STEP = math.radians(4.0)
+        heading_err = float(command.get("heading_error", 0.0))
+        if abs(heading_err) > math.radians(5.0):
+            MAX_STEER_STEP = math.radians(8.0)  # ~160°/s for fast recovery
         raw_steer = float(command["steering"])
         delta = raw_steer - self._prev_steering
         clamped_delta = max(-MAX_STEER_STEP, min(MAX_STEER_STEP, delta))
@@ -449,8 +454,36 @@ def _derate_speed_profile(
                 if d2 < best_d2:
                     best_d2, best_k = d2, k
             slope = cl_dz[min(best_k, len(cl_dz) - 1)]
-            if slope > slope_threshold:
-                derated[i] = min(derated[i], terrain_min_speed)
+            # Check adjacent centreline indices so the derating zone is
+            # at least 3 samples wide — prevents a single-point speed dip
+            # that the vehicle cannot physically follow.
+            if best_k > 0:
+                slope = max(slope, cl_dz[best_k - 1])
+            if best_k < len(cl_dz) - 1:
+                slope = max(slope, cl_dz[best_k + 1])
+            # Proportional derating: ramp smoothly from full speed at
+            # slope=0 down to terrain_min_speed at slope_threshold+.
+            if slope > 0.0:
+                ratio = min(1.0, slope / slope_threshold)
+                derated[i] = min(derated[i],
+                                 terrain_min_speed + (1.0 - ratio) * (derated[i] - terrain_min_speed))
+
+    # ── Re-run feasibility passes after derating ──
+    # Derating clamps individual points; the forward/backward passes
+    # below propagate those clamps so the speed profile is physically
+    # realisable (respects accel/decel limits).
+    for i in range(1, len(derated)):
+        ds = arc[i] - arc[i - 1]
+        if ds <= 0.0:
+            continue
+        v_limit = math.sqrt(max(0.0, derated[i - 1] ** 2 + 2.0 * cfg.max_decel * ds))
+        derated[i] = min(derated[i], v_limit)
+    for i in range(len(derated) - 2, -1, -1):
+        ds = arc[i + 1] - arc[i]
+        if ds <= 0.0:
+            continue
+        v_limit = math.sqrt(max(0.0, derated[i + 1] ** 2 + 2.0 * cfg.max_accel * ds))
+        derated[i] = min(derated[i], v_limit)
 
     return derated
 
