@@ -408,20 +408,21 @@ class PathFollowerNode(Node):
 
 
 def _projected_index(path, arc_lengths, position, last_idx=0, lookahead_s=0.8) -> int:
-    """s‑coordinate projection: find the path segment that contains the
-    vehicle's perpendicular projection, then look ahead by *lookahead_s*
-    metres of arc length.
+    """s‑coordinate projection: find the closest point on the polyline
+    (clamped perpendicular projection onto each segment), then look ahead
+    by *lookahead_s* metres of arc length.
 
-    This is the Frenet-equivalent of "where along the path am I?" — it
-    correctly handles curves where Euclidean nearest-neighbour picks a
-    laterally-close but wrong-s point.
+    This correctly handles curves where the unclamped perpendicular
+    projection falls outside every segment.
     """
     if not path or len(path) < 2:
         return 0
     px, py = position
     start = max(0, last_idx)
-    # Walk forward from last known index; find the segment whose
-    # perpendicular projection of the vehicle falls inside [0, 1].
+    best_d2 = float("inf")
+    best_s_proj = 0.0
+    # Scan forward from last known index; find the segment that is
+    # closest to the vehicle (clamped projection).
     for i in range(start, len(path) - 1):
         ax, ay = path[i]
         bx, by = path[i + 1]
@@ -430,17 +431,21 @@ def _projected_index(path, arc_lengths, position, last_idx=0, lookahead_s=0.8) -
         if seg_len2 < 1e-12:
             continue
         t = ((px - ax) * abx + (py - ay) * aby) / seg_len2
-        if 0.0 <= t <= 1.0:
+        t = max(0.0, min(1.0, t))  # clamp to segment
+        cx = ax + t * abx
+        cy = ay + t * aby
+        d2 = (px - cx) ** 2 + (py - cy) ** 2
+        if d2 < best_d2:
+            best_d2 = d2
             s_i = arc_lengths[i] if i < len(arc_lengths) else 0.0
             s_next = arc_lengths[i + 1] if i + 1 < len(arc_lengths) else s_i
-            s_proj = s_i + t * (s_next - s_i)
-            target_s = s_proj + lookahead_s
-            for j in range(i, len(arc_lengths)):
-                if arc_lengths[j] >= target_s:
-                    return j
-            return len(path) - 1
-    # Fallback: no segment contained the projection — use closest point
-    return _closest_index(path, position)
+            best_s_proj = s_i + t * (s_next - s_i)
+    # Look ahead by lookahead_s metres of arc length.
+    target_s = best_s_proj + lookahead_s
+    for j in range(0, len(arc_lengths)):
+        if arc_lengths[j] >= target_s:
+            return j
+    return len(path) - 1
 
 
 def _closest_index(path, position) -> int:
