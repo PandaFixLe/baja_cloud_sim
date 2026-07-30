@@ -360,7 +360,7 @@ class PathFollowerNode(Node):
             )
             # LQI integral update with anti-windup clamp
             self._lqr_e_y_int += float(command.get("e_y", 0.0)) * 0.05
-            self._lqr_e_y_int = max(-2.0, min(2.0, self._lqr_e_y_int))
+            self._lqr_e_y_int = max(-0.5, min(0.5, self._lqr_e_y_int))
         else:
             command = legacy_path_control(
                 self.position, self.yaw_navigation, effective_path,
