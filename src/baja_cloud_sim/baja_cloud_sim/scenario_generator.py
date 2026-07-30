@@ -114,7 +114,7 @@ def generate(output: Path, seed: int, obstacle_count: int, package_share: Path) 
         "length": 100.0,
         "spacing": 0.5,
         "gps_origin": {"latitude": 30.0, "longitude": 114.0, "altitude": 30.0},
-        "vehicle": {"length": 2.1, "width": 1.55, "wheelbase": 1.43, "mass": 220.0},
+        "vehicle": {"length": 3.0, "width": 1.5, "wheelbase": 1.43, "mass": 292.0},
         "road_layout": {
             "initial_straight_m": 50.0,
             "turn_direction": "left",
@@ -150,7 +150,7 @@ def generate(output: Path, seed: int, obstacle_count: int, package_share: Path) 
     world = f"""<?xml version="1.0"?>
 <sdf version="1.9">
   <world name="baja_track">
-    <physics name="high_rate_dynamics" type="ode">
+    <physics name="high_rate_dynamics" type="ignored">
       <max_step_size>0.002</max_step_size>
       <real_time_factor>1.0</real_time_factor>
       <real_time_update_rate>500</real_time_update_rate>

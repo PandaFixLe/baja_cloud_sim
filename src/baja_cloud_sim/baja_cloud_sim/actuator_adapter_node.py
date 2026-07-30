@@ -10,6 +10,8 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 
+from .core import smooth_velocity
+
 
 class ActuatorAdapterNode(Node):
     def __init__(self) -> None:
@@ -20,6 +22,8 @@ class ActuatorAdapterNode(Node):
         self.timeout = float(self.get_parameter("command_timeout").value)
         self.last_command = None
         self.last_stamp = None
+        self._current_speed = 0.0
+        self._prev_accel = 0.0
         self.command_pub = self.create_publisher(Twist, "/model/baja_vehicle/cmd_vel", 10)
         self.status_pub = self.create_publisher(AckermannDriveStamped, "/vehicle_status", 10)
         self.create_subscription(AckermannDriveStamped, "/cmd_control", self._command_callback, 20)
@@ -43,10 +47,19 @@ class ActuatorAdapterNode(Node):
         if self.last_command is not None and self.last_stamp is not None:
             age = (self.get_clock().now() - self.last_stamp).nanoseconds / 1e9
             if age <= self.timeout:
-                speed = float(self.last_command.drive.speed)
+                target_speed = float(self.last_command.drive.speed)
                 steering = float(self.last_command.drive.steering_angle)
-                output.linear.x = speed
-                output.angular.z = speed * math.tan(steering) / self.wheelbase if abs(speed) > 0.01 else 0.0
+                # accel + jerk smoothing (Phase 0.6)
+                smoothed, self._prev_accel = smooth_velocity(
+                    target_speed, self._current_speed, 2.0, -2.5, 0.05,
+                    prev_accel=self._prev_accel, max_jerk=4.0,
+                )
+                self._current_speed = smoothed
+                output.linear.x = smoothed
+                output.angular.z = smoothed * math.tan(steering) / self.wheelbase if abs(smoothed) > 0.01 else 0.0
+        else:
+            self._current_speed = 0.0
+            self._prev_accel = 0.0
         self.command_pub.publish(output)
 
 

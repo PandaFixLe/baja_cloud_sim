@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import csv
 import math
-from datetime import datetime
-from pathlib import Path
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -18,6 +15,8 @@ from visualization_msgs.msg import Marker, MarkerArray
 from .core import (
     PlannerConfig,
     base_to_world,
+    gps_to_local,
+    nav_to_world_yaw,
     nearest_index,
     plan_frenet_path,
     quaternion_to_yaw,
@@ -34,15 +33,13 @@ class FrenetPlannerNode(Node):
             ("origin_latitude", 30.0), ("origin_longitude", 114.0),
             ("horizon_m", 30.0), ("center_weight", 1.0),
             ("clearance_weight", 12.0), ("desired_clearance", 1.2),
-            ("vehicle_length", 2.1), ("vehicle_width", 1.55),
-            ("safety_margin", 0.15),
-            # v1.1 planner path-log side-car (fail-safe, off by default in tests)
-            ("enable_path_log", True),
-            ("path_log_dir", "results"),
+            ("vehicle_length", 3.0), ("vehicle_width", 1.5),
+            ("default_half_width", 4.0),
         ):
             self.declare_parameter(name, default)
         self.origin_lat = float(self.get_parameter("origin_latitude").value)
         self.origin_lon = float(self.get_parameter("origin_longitude").value)
+        self.default_half_width = float(self.get_parameter("default_half_width").value)
         self.config = PlannerConfig(
             horizon_m=float(self.get_parameter("horizon_m").value),
             center_weight=float(self.get_parameter("center_weight").value),
@@ -50,7 +47,6 @@ class FrenetPlannerNode(Node):
             desired_clearance=float(self.get_parameter("desired_clearance").value),
             vehicle_length=float(self.get_parameter("vehicle_length").value),
             vehicle_width=float(self.get_parameter("vehicle_width").value),
-            safety_margin=float(self.get_parameter("safety_margin").value),
         )
         self.centerline = []
         self.position = None
@@ -60,13 +56,6 @@ class FrenetPlannerNode(Node):
         self.right_world = []
         self.obstacles = []
         self.last_nearest = 0
-
-        # v1.1: side-car CSV path log (fail-safe; disabled by env if needed).
-        self.enable_path_log = bool(self.get_parameter("enable_path_log").value)
-        self.path_log_dir = Path(str(self.get_parameter("path_log_dir").value))
-        self._path_log_handle = None
-        self._path_log_writer = None
-        self._path_log_path = None
 
         self.path_pub = self.create_publisher(PathMessage, "/planned_path", 10)
         self.status_pub = self.create_publisher(String, "/planner/status", 10)
@@ -90,18 +79,18 @@ class FrenetPlannerNode(Node):
             x, y = pose.pose.position.x, pose.pose.position.y
             if previous is not None:
                 cumulative += math.hypot(x - previous[0], y - previous[1])
-            points.append({"x": x, "y": y, "yaw": yaw, "s": cumulative, "half_width": 4.0})
+            points.append({"x": x, "y": y, "yaw": yaw, "s": cumulative, "half_width": self.default_half_width})
             previous = (x, y)
         self.centerline = points
 
     def _gps_callback(self, message: NavSatFix) -> None:
-        x = (message.longitude - self.origin_lon) * 111320.0 * math.cos(math.radians(self.origin_lat))
-        y = (message.latitude - self.origin_lat) * 111320.0
-        self.position = (x, y)
+        self.position = gps_to_local(
+            message.latitude, message.longitude, self.origin_lat, self.origin_lon
+        )
 
     def _yaw_callback(self, message: Float32) -> None:
         self.yaw_navigation = float(message.data)
-        self.yaw_world = wrap_angle(math.pi * 0.5 - self.yaw_navigation)
+        self.yaw_world = nav_to_world_yaw(self.yaw_navigation)
 
     def _boundary_callback(self, message: MarkerArray) -> None:
         if self.position is None:
@@ -143,11 +132,14 @@ class FrenetPlannerNode(Node):
         right_limits = [-point["half_width"] for point in self.centerline]
         horizon_end = min(len(self.centerline), self.last_nearest + int(self.config.horizon_m / 0.5) + 8)
         for index in range(self.last_nearest, horizon_end):
+            # Compute left/right limits independently — ns labels guarantee
+            # which boundary is which, no max/min cross-mixing needed.
             left = self._closest_lateral(self.centerline[index], self.left_world)
             right = self._closest_lateral(self.centerline[index], self.right_world)
-            if left is not None and right is not None:
-                left_limits[index] = max(left, right)
-                right_limits[index] = min(left, right)
+            if left is not None:
+                left_limits[index] = max(left_limits[index], left)
+            if right is not None:
+                right_limits[index] = min(right_limits[index], right)
         result = plan_frenet_path(
             self.centerline, self.last_nearest, self.position,
             left_limits, right_limits, self.obstacles, self.config,
@@ -203,67 +195,6 @@ class FrenetPlannerNode(Node):
         text.lifetime.nanosec = 180_000_000
         array.markers.append(text)
         self.debug_pub.publish(array)
-
-        # v1.1: side-car CSV path log (writes after publish, never blocks the cycle).
-        cycle_stamp = self.get_clock().now().nanoseconds / 1e9
-        self._write_path_log(cycle_stamp, result)
-
-    def _open_path_log(self, cycle_stamp: float) -> None:
-        if self._path_log_handle is not None:
-            return
-        try:
-            self.path_log_dir.mkdir(parents=True, exist_ok=True)
-            suffix = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-            self._path_log_path = self.path_log_dir / f"planned_path_{suffix}.csv"
-            self._path_log_handle = self._path_log_path.open("w", encoding="utf-8", newline="")
-            self._path_log_writer = csv.writer(self._path_log_handle)
-            self._path_log_writer.writerow(["timestamp_s", "x", "y", "yaw", "seq"])
-            self.get_logger().info(f"Planner path log: {self._path_log_path}")
-        except OSError as exc:
-            self.get_logger().warning(f"Planner path log open failed: {exc}")
-            self._path_log_handle = None
-            self._path_log_writer = None
-            self._path_log_path = None
-
-    def _write_path_log(self, cycle_stamp: float, result) -> None:
-        if not self.enable_path_log or not result.feasible or not result.path:
-            return
-        if self._path_log_handle is None:
-            self._open_path_log(cycle_stamp)
-        if self._path_log_writer is None:
-            return
-        try:
-            for seq, point in enumerate(result.path):
-                if seq + 1 < len(result.path):
-                    dx = result.path[seq + 1][0] - point[0]
-                    dy = result.path[seq + 1][1] - point[1]
-                else:
-                    dx = point[0] - result.path[seq - 1][0]
-                    dy = point[1] - result.path[seq - 1][1]
-                yaw = math.atan2(dy, dx) if dx * dx + dy * dy > 1e-12 else 0.0
-                self._path_log_writer.writerow(
-                    [f"{cycle_stamp:.6f}", f"{point[0]:.5f}", f"{point[1]:.5f}",
-                     f"{yaw:.6f}", seq]
-                )
-            self._path_log_handle.flush()
-        except OSError as exc:
-            self.get_logger().warning(
-                f"Planner path log write failed: {exc}; disabling further writes"
-            )
-            self._path_log_writer = None
-            # Keep the handle open so destroy_node() still closes it cleanly.
-
-    def destroy_node(self):
-        if self._path_log_handle is not None and not self._path_log_handle.closed:
-            try:
-                self._path_log_handle.flush()
-                self._path_log_handle.close()
-            except OSError as exc:
-                self.get_logger().warning(f"Planner path log close failed: {exc}")
-            finally:
-                self._path_log_handle = None
-                self._path_log_writer = None
-        return super().destroy_node()
 
 
 def main(args=None) -> None:

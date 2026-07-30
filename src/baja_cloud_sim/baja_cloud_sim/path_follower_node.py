@@ -3,32 +3,70 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
+from enum import Enum
 
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
 from geometry_msgs.msg import PointStamped
-from nav_msgs.msg import Path as PathMessage
+from nav_msgs.msg import Odometry, Path as PathMessage
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, String
 
 from .core import (
     ControllerConfig,
-    StanleyControllerConfig,
-    StanleyState,
-    clamp,
+    LQRConfig,
+    LQRController,
+    PlannedTrajectory,
+    SpeedProfileConfig,
+    compute_lqr_control,
+    gps_to_local,
     legacy_path_control,
-    stanley_path_control,
-    lqr_path_control,
-    signed_lateral,
-    polyline_distance,
-    wrap_angle,
-    augment_path_for_cte,
+    nav_to_world_yaw,
     nearest_index,
+    plan_speed_profile,
+    signed_lateral,
+    point_to_oriented_box_clearance,
 )
-from .trajectory_smoother import TrajectorySmoother, TrajectoryTable
-from .lqr_controller import LQRController, LQRConfig
+
+
+# ── Phase 3 state machine ─────────────────────────────────────────────
+class _ControlState(Enum):
+    NORMAL = 0
+    SLOWDOWN = 1
+    EMERGENCY = 2
+
+
+def _evaluate_state(
+    consecutive_infeasible: int,
+    consecutive_feasible: int,
+    tracking_error: float,
+    min_clearance: float,
+    current: _ControlState,
+) -> _ControlState:
+    """3-level state machine with hysteresis (Phase 3.3)."""
+    if current == _ControlState.NORMAL:
+        if (min_clearance < 0.05 or consecutive_infeasible >= 30):
+            return _ControlState.EMERGENCY
+        if (consecutive_infeasible >= 3
+                or tracking_error > 0.8
+                or min_clearance < 0.3):
+            return _ControlState.SLOWDOWN
+        return _ControlState.NORMAL
+    elif current == _ControlState.SLOWDOWN:
+        if (min_clearance < 0.05 or consecutive_infeasible >= 30):
+            return _ControlState.EMERGENCY
+        if (consecutive_feasible >= 5
+                and tracking_error < 0.3
+                and min_clearance > 0.5):
+            return _ControlState.NORMAL
+        return _ControlState.SLOWDOWN
+    else:  # EMERGENCY
+        if (consecutive_feasible >= 50
+                and tracking_error < 0.2
+                and min_clearance > 1.0):
+            return _ControlState.NORMAL
+        return _ControlState.EMERGENCY
 
 
 class PathFollowerNode(Node):
@@ -38,24 +76,6 @@ class PathFollowerNode(Node):
             ("origin_latitude", 30.0), ("origin_longitude", 114.0),
             ("target_speed", 2.5), ("lookahead_distance", 3.0),
             ("kp_heading", 1.2), ("max_steering_angle", 35.0),
-            # v1.1 Stanley controller additions
-            ("controller_mode", "stanley"),
-            ("kd_heading", 0.3),
-            ("k_stanley", 0.8),
-            ("k_cte_dot", 0.15),
-            ("k_yaw_rate", 0.5),
-            ("steering_alpha", 0.6),
-            ("max_steer_rate_deg", 8.0),
-            ("adaptive_steering", True),
-            ("adaptive_speed", True),
-            # LQR controller parameters
-            ("wheelbase", 1.43),
-            ("lqr_q_cte", 10.0),
-            ("lqr_q_cte_dot", 1.0),
-            ("lqr_q_heading", 5.0),
-            ("lqr_q_yaw_rate", 0.5),
-            ("lqr_r_steer", 10.0),
-            ("lqr_fb_limit_deg", 3.0),
         ):
             self.declare_parameter(name, default)
         self.origin_lat = float(self.get_parameter("origin_latitude").value)
@@ -66,163 +86,117 @@ class PathFollowerNode(Node):
             heading_gain=float(self.get_parameter("kp_heading").value),
             max_steering_deg=float(self.get_parameter("max_steering_angle").value),
         )
-        # Note: v1.0 path_follower_node already consumes online /planned_path;
-        # no CSV-loading, 4WS, or virtual_target state-machine remains here.
-        mode = str(self.get_parameter("controller_mode").value).strip().lower()
-        if mode not in ("legacy", "stanley", "lqr"):
-            self.get_logger().warning(
-                f"Unknown controller_mode '{mode}', falling back to 'stanley'"
-            )
-            mode = "stanley"
-        self.controller_mode = mode
-        if mode in ("stanley", "lqr"):
-            self.stanley_config = StanleyControllerConfig(
-                target_speed=self.config.target_speed,
-                lookahead_distance=self.config.lookahead_distance,
-                heading_gain=self.config.heading_gain,
-                max_steering_deg=self.config.max_steering_deg,
-                kd_heading=float(self.get_parameter("kd_heading").value),
-                k_stanley=float(self.get_parameter("k_stanley").value),
-                k_cte_dot=float(self.get_parameter("k_cte_dot").value),
-                k_yaw_rate=float(self.get_parameter("k_yaw_rate").value),
-                steering_alpha=float(self.get_parameter("steering_alpha").value),
-                max_steer_rate_deg=float(self.get_parameter("max_steer_rate_deg").value),
-                adaptive_steering=bool(self.get_parameter("adaptive_steering").value),
-                adaptive_speed=bool(self.get_parameter("adaptive_speed").value),
-            )
-            self.stanley_state = StanleyState()
-        else:
-            self.stanley_config = None
-            self.stanley_state = None
         self.position = None
-        self.prev_position = None   # for GPS speed estimation
         self.yaw_navigation = 0.0
-        self._yaw_received = False  # guard: don't control until first IMU yaw arrives
+        self.yaw_world = 0.0
         self.path = []
+        # LQR state (Phase 2)
+        self._odom_velocity = (0.0, 0.0)  # (vx, vy) world-frame
+        self._yaw_rate = 0.0
+        self._lqr = LQRController()
+        self._lqr_cfg = LQRConfig()
+        self._current_speed = 0.0
+        self._prev_steering = 0.0  # low-pass filter state (Phase 3.2)
+        self.declare_parameter("enable_lqr", True)
+        self._enable_lqr = bool(self.get_parameter("enable_lqr").value)
         self.planner_feasible = False
         self.last_path_time = None
+        self._last_valid_path = []  # freewheel buffer
+        self._infeasible_count = 0
+        self._consecutive_feasible = 0  # Phase 3.5
+        self._ctrl_state = _ControlState.NORMAL  # Phase 3.3
+        self._speed_profile: List[float] = []  # target speeds along path
+        self._path_curvatures: List[float] = []  # curvature per path point
+        self._path_yaws: List[float] = []  # yaw per path point
+        self._path_arc_lengths: List[float] = []  # arc-length per path point
+        self._path_nearest: int = 0  # nearest index in path for speed lookup
+
+        # speed profile toggle
+        self.declare_parameter("use_speed_profile", True)
+        self._use_speed_profile = bool(
+            self.get_parameter("use_speed_profile").value
+        )
+        self._speed_cfg = SpeedProfileConfig()
 
         self.command_pub = self.create_publisher(AckermannDriveStamped, "/cmd_control", 10)
         self.lookahead_pub = self.create_publisher(PointStamped, "/lookahead_point", 10)
-
-        # LQR + Bézier trajectory smoother (used when controller_mode == "lqr")
-        self.trajectory_table: Optional[TrajectoryTable] = None
-        self.lqr_ctrl: Optional[LQRController] = None
-        if mode == "lqr":
-            self.smoother = TrajectorySmoother(wheelbase=1.43)
-            self.smoothed_pub = self.create_publisher(PathMessage, "/smoothed_path", 10)
-            self.lqr_config = LQRConfig(
-                wheelbase=float(self.get_parameter("wheelbase").value),
-                q_cte=float(self.get_parameter("lqr_q_cte").value),
-                q_cte_dot=float(self.get_parameter("lqr_q_cte_dot").value),
-                q_heading=float(self.get_parameter("lqr_q_heading").value),
-                q_yaw_rate=float(self.get_parameter("lqr_q_yaw_rate").value),
-                r_steer=float(self.get_parameter("lqr_r_steer").value),
-                fb_limit_deg=float(self.get_parameter("lqr_fb_limit_deg").value),
-            )
-            self.get_logger().info(
-                "path_follower: mode=lqr (Bézier feed-forward + LQR feedback)"
-            )
-        else:
-            self.smoother = None
-            self.smoothed_pub = None
-            self.lqr_config = None
-
-        # Predicted trajectory (kinematic bicycle forward-sim in RViz)
-        self.predicted_pub = self.create_publisher(PathMessage, "/predicted_trajectory", 10)
-
         self.create_subscription(NavSatFix, "/gps/fix", self._gps_callback, 20)
         self.create_subscription(Float32, "/imu/yaw", self._yaw_callback, 20)
         self.create_subscription(PathMessage, "/planned_path", self._path_callback, 10)
         self.create_subscription(String, "/planner/status", self._status_callback, 10)
+        self.create_subscription(Odometry, "/ground_truth/odom", self._odom_callback, 20)
         self.create_timer(0.05, self._control)
-        if self.controller_mode == "stanley":
-            self.get_logger().info(
-                "path_follower: mode=stanley (Stanley + PD + dual-damping + low-pass + rate-limit)"
-            )
-        else:
-            self.get_logger().info(
-                "path_follower: mode=legacy (fallback)"
-            )
+        mode = "LQR 4x4" if self._enable_lqr else "Pure Pursuit"
+        self.get_logger().info(f"Path follower ready: {mode} control with speed profile")
 
     def _gps_callback(self, message: NavSatFix) -> None:
-        x = (message.longitude - self.origin_lon) * 111320.0 * math.cos(math.radians(self.origin_lat))
-        y = (message.latitude - self.origin_lat) * 111320.0
-        if self.position is not None:
-            self.prev_position = self.position
-        self.position = (x, y)
+        self.position = gps_to_local(
+            message.latitude, message.longitude, self.origin_lat, self.origin_lon
+        )
 
     def _yaw_callback(self, message: Float32) -> None:
         self.yaw_navigation = float(message.data)
-        self._yaw_received = True
+        self.yaw_world = nav_to_world_yaw(self.yaw_navigation)
+
+    def _odom_callback(self, message: Odometry) -> None:
+        self._odom_velocity = (
+            message.twist.twist.linear.x,
+            message.twist.twist.linear.y,
+        )
+        self._yaw_rate = message.twist.twist.angular.z
+        self._current_speed = math.hypot(
+            message.twist.twist.linear.x,
+            message.twist.twist.linear.y,
+        )
 
     def _path_callback(self, message: PathMessage) -> None:
         self.path = [(pose.pose.position.x, pose.pose.position.y) for pose in message.poses]
+        if len(self.path) >= 2:
+            self._last_valid_path = self.path
+            if self._use_speed_profile:
+                self._compute_speed_profile(self.path)
         self.last_path_time = self.get_clock().now()
-        # Trajectory table is built per control tick (sliding window from car position)
+
+    def _compute_speed_profile(self, path: List[tuple]) -> None:
+        """Derive curvatures from path points → plan speed profile."""
+        N = len(path)
+        if N < 3:
+            self._speed_profile = [self.config.target_speed] * N
+            return
+
+        # arc lengths and yaws
+        arc = [0.0]
+        yaws = [0.0]
+        for i in range(N):
+            if i > 0:
+                ds = math.hypot(path[i][0] - path[i-1][0],
+                                path[i][1] - path[i-1][1])
+                arc.append(arc[-1] + ds)
+            if i < N - 1:
+                yaw = math.atan2(path[i+1][1] - path[i][1],
+                                 path[i+1][0] - path[i][0])
+                yaws.append(yaw)
+            elif i > 0:
+                yaws.append(yaws[-1])
+
+        # curvature from yaw difference
+        curvatures = [0.0]
+        for i in range(1, N):
+            ds_i = arc[i] - arc[i-1]
+            k = (yaws[i] - yaws[i-1]) / max(ds_i, 1e-6) if ds_i > 1e-6 else 0.0
+            curvatures.append(k)
+
+        # smooth curvature
+        win_size = self._speed_cfg.curvature_smooth_window
+        curvatures = _moving_average(curvatures, win_size)
+        self._path_curvatures = curvatures
+        self._path_yaws = yaws
+
+        self._speed_profile = plan_speed_profile(curvatures, arc, self._speed_cfg)
+        self._path_arc_lengths = arc
 
     def _status_callback(self, message: String) -> None:
         self.planner_feasible = message.data == "FEASIBLE"
-
-    def _publish_smoothed_path(self) -> None:
-        """Publish the Bézier-smoothed trajectory as a nav_msgs/Path for RViz."""
-        if self.trajectory_table is None or self.smoothed_pub is None:
-            return
-        msg = PathMessage()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "map"
-        from geometry_msgs.msg import PoseStamped
-        for pt in self.trajectory_table.points:
-            ps = PoseStamped()
-            ps.header = msg.header
-            ps.pose.position.x = pt.x
-            ps.pose.position.y = pt.y
-            ps.pose.position.z = 0.12
-            # Encode yaw in orientation quaternion
-            half_yaw = pt.yaw * 0.5
-            ps.pose.orientation.z = math.sin(half_yaw)
-            ps.pose.orientation.w = math.cos(half_yaw)
-            msg.poses.append(ps)
-        self.smoothed_pub.publish(msg)
-
-    def _compute_safety_speed(self, speed_cmd: float, steering: float) -> float:
-        """Two-level safety monitor: forward-sim predicted trajectory vs planned path.
-
-        Level 1 (max_dev ≥ 0.8 m) → speed = 0.8 m/s
-        Level 2 (max_dev ≥ 1.5 m) → speed = 0.4 m/s
-        """
-        if self.position is None or len(self.path) < 4:
-            return speed_cmd
-
-        wheelbase = 1.43
-        dt = 0.05
-        n_steps = 40
-        yaw = math.pi * 0.5 - self.yaw_navigation
-        px, py = self.position
-        v = max(speed_cmd, 0.1)
-
-        max_dev = 0.0
-        for _ in range(n_steps):
-            px += v * math.cos(yaw) * dt
-            py += v * math.sin(yaw) * dt
-            yaw += (v / wheelbase) * math.tan(steering) * dt
-            d = polyline_distance((px, py), self.path)
-            if d > max_dev:
-                max_dev = d
-
-        if max_dev >= 1.5:
-            self.get_logger().warn(
-                f"SAFETY L2: max_dev={max_dev:.2f}m → speed=0.4",
-                throttle_duration_sec=0.5,
-            )
-            return 0.4
-        if max_dev >= 0.8:
-            self.get_logger().warn(
-                f"SAFETY L1: max_dev={max_dev:.2f}m → speed=0.8",
-                throttle_duration_sec=0.5,
-            )
-            return 0.8
-        return speed_cmd
 
     def _publish_stop(self) -> None:
         message = AckermannDriveStamped()
@@ -232,130 +206,135 @@ class PathFollowerNode(Node):
         message.drive.steering_angle = 0.0
         self.command_pub.publish(message)
 
-    def _publish_predicted_trajectory(self, speed: float, steering: float) -> None:
-        """Forward-sim kinematic bicycle for 1 second and publish as Path."""
-        if self.position is None:
-            return
-        wheelbase = 1.43
-        dt = 0.05
-        steps = 40
-        # Convert navigation yaw (0=North, CW+) to math yaw (0=+X, CCW+)
-        yaw = math.pi * 0.5 - self.yaw_navigation
-        x, y = self.position
-        v = max(speed, 0.1)
-
-        msg = PathMessage()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "map"
-        from geometry_msgs.msg import PoseStamped
-
-        for _ in range(steps):
-            x += v * math.cos(yaw) * dt
-            y += v * math.sin(yaw) * dt
-            yaw += (v / wheelbase) * math.tan(steering) * dt
-            ps = PoseStamped()
-            ps.header = msg.header
-            ps.pose.position.x = x
-            ps.pose.position.y = y
-            ps.pose.position.z = 0.12
-            msg.poses.append(ps)
-
-        self.predicted_pub.publish(msg)
-
-    def _estimate_gps_speed(self) -> float:
-        """Estimate actual speed from consecutive GPS positions."""
-        if self.position is None or self.prev_position is None:
-            return 0.0
-        dx = self.position[0] - self.prev_position[0]
-        dy = self.position[1] - self.prev_position[1]
-        return math.hypot(dx, dy) / 0.05  # GPS at ~20 Hz, ~50 ms between samples
-
     def _control(self) -> None:
-        if self.position is None or not self._yaw_received or not self.planner_feasible or len(self.path) < 2:
-            self._publish_stop()
-            return
-        if self.last_path_time is None or (self.get_clock().now() - self.last_path_time).nanoseconds > 400_000_000:
+        if self.position is None:
             self._publish_stop()
             return
 
-        if self.controller_mode == "legacy":
-            command = legacy_path_control(self.position, self.yaw_navigation, self.path, self.config)
-            speed = float(command["speed"])
-            steering = float(command["steering"])
-            target_x, target_y = float(command["target_x"]), float(command["target_y"])
-        elif self.controller_mode == "lqr":
-            # --- sliding-window table: build from car position every tick ---
-            if self.smoother is not None and len(self.path) >= 4:
-                augmented = augment_path_for_cte(self.path)
-                car_nn = nearest_index(
-                    augmented,
-                    self.position[0], self.position[1],
-                    start=getattr(self, "_car_nn", 0),
-                )
-                self._car_nn = max(0, car_nn)
-                window = self.path[car_nn:car_nn + 8]
-                target_speed = float(self.get_parameter("target_speed").value)
-                generated_at = self.get_clock().now().nanoseconds * 1e-9
-                self.trajectory_table = self.smoother.generate(
-                    window, target_speed=target_speed,
-                    num_lookahead_pts=8, segments=2,
-                    generated_at=generated_at,
-                )
-                if self.lqr_ctrl is None and self.trajectory_table is not None:
-                    self.lqr_ctrl = LQRController(self.lqr_config)
-                    self.get_logger().info(
-                        f"LQR controller initialised — {len(self.trajectory_table.points)} pts, "
-                        f"arc={self.trajectory_table.total_length:.1f}m (sliding window)"
-                    )
-                elif self.trajectory_table is None:
-                    self.get_logger().warn(
-                        f"Smoother returned None (window={len(window)} pts from car_nn={car_nn})",
-                        throttle_duration_sec=2.0,
-                    )
-                # Publish smoothed path
-                if self.smoothed_pub is not None and self.trajectory_table is not None:
-                    self._publish_smoothed_path()
-
-            command = lqr_path_control(
-                self.position, self.yaw_navigation, self.path,
-                self.stanley_config, self.stanley_state, dt=0.05,
-                trajectory_table=self.trajectory_table,
-                lqr_ctrl=self.lqr_ctrl,
-            )
-            self.stanley_state = command["state"]
-            speed = float(command["speed"])
-            steering = float(command["steering"])
-            target_x, target_y = float(command["target_x"]), float(command["target_y"])
+        # Freewheel: if planner reports infeasible, keep using the last
+        # valid path for up to ~300 ms (6 cycles @ 20 Hz) before stopping.
+        if not self.planner_feasible or len(self.path) < 2:
+            self._infeasible_count += 1
         else:
-            command = stanley_path_control(
-                self.position, self.yaw_navigation, self.path,
-                self.stanley_config, self.stanley_state, dt=0.05,
-            )
-            self.stanley_state = command["state"]
-            speed = float(command["speed"])
-            steering = float(command["steering"])
-            target_x, target_y = float(command["target_x"]), float(command["target_y"])
+            self._infeasible_count = 0
+            self._consecutive_feasible += 1
 
-        # ---- safety overlay: two-level warning based on predicted deviation ----
-        speed = self._compute_safety_speed(speed, steering)
+        # Phase 3.3: evaluate control state
+        nearest = _closest_index(self.path if len(self.path) >= 2 else [[0.0, 0.0]], self.position)
+        center_ref = self.path[nearest] if nearest < len(self.path) else (0.0, 0.0)
+        track_err = abs(signed_lateral(self.position,
+                        {"x": center_ref[0], "y": center_ref[1], "yaw": self.yaw_world}))
+        self._ctrl_state = _evaluate_state(
+            self._infeasible_count, self._consecutive_feasible,
+            track_err, 1.0,  # clearance not available in node
+            self._ctrl_state,
+        )
+
+        effective_path = self.path
+        if self._infeasible_count > 0:
+            if self._infeasible_count <= 6 and len(self._last_valid_path) >= 2:
+                effective_path = self._last_valid_path
+            else:
+                self._publish_stop()
+                return
+
+        if self.last_path_time is not None:
+            age_ns = (self.get_clock().now() - self.last_path_time).nanoseconds
+            if age_ns > 400_000_000:
+                self._publish_stop()
+                return
+
+        if len(effective_path) < 2:
+            self._publish_stop()
+            return
+
+        # ── LQR control (Phase 2) ──
+        if self._enable_lqr and len(self._path_curvatures) > 0:
+            nearest = _closest_index(effective_path, self.position)
+            idx = min(nearest, len(effective_path) - 1)
+            reference = {
+                "x": effective_path[idx][0],
+                "y": effective_path[idx][1],
+                "yaw": self._path_yaws[idx] if idx < len(self._path_yaws) else self.yaw_world,
+                "kappa": self._path_curvatures[idx] if idx < len(self._path_curvatures) else 0.0,
+            }
+            command = compute_lqr_control(
+                self.position, self.yaw_world,
+                self._odom_velocity, self._yaw_rate,
+                reference,
+                self._speed_profile if self._use_speed_profile else None,
+                nearest,
+                self._current_speed,
+                self._lqr, self._lqr_cfg,
+                effective_path, self.config,
+                self.yaw_navigation,
+            )
+        else:
+            command = legacy_path_control(
+                self.position, self.yaw_navigation, effective_path,
+                self.config, current_speed=self._current_speed,
+            )
+
+        # Phase 1.5: replace steering-based derating with curvature-aware speed profile
+        target_speed = float(command["speed"])
+        if self._use_speed_profile and len(self._speed_profile) > 0:
+            nearest = _closest_index(effective_path, self.position)
+            if nearest < len(self._speed_profile):
+                target_speed = self._speed_profile[nearest]
+
+        # Phase 3.4: state-based speed override
+        if self._ctrl_state == _ControlState.EMERGENCY:
+            target_speed = 0.0
+            self._prev_steering = 0.0  # also zero steering on stop
+        elif self._ctrl_state == _ControlState.SLOWDOWN:
+            target_speed = min(target_speed, 1.0)
 
         message = AckermannDriveStamped()
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = "base_link"
-        message.drive.speed = speed
-        message.drive.steering_angle = steering
+        message.drive.speed = float(target_speed)
+        # Phase 3.2: EMA low-pass on steering to avoid aggressive corrections
+        raw_steer = float(command["steering"])
+        self._prev_steering = 0.7 * raw_steer + 0.3 * self._prev_steering
+        message.drive.steering_angle = self._prev_steering
         self.command_pub.publish(message)
 
         lookahead = PointStamped()
         lookahead.header.stamp = message.header.stamp
         lookahead.header.frame_id = "map"
-        lookahead.point.x = target_x
-        lookahead.point.y = target_y
+        lookahead.point.x = command["target_x"]
+        lookahead.point.y = command["target_y"]
         lookahead.point.z = 0.18
         self.lookahead_pub.publish(lookahead)
 
-        # ---- predicted trajectory (kinematic bicycle, 1 s / 20 steps) ----
-        self._publish_predicted_trajectory(speed, steering)
+
+def _closest_index(path, position) -> int:
+    """Return index of the path point closest to the given position."""
+    if not path:
+        return 0
+    best = 0
+    best_d2 = float("inf")
+    px, py = position
+    for i, (x, y) in enumerate(path):
+        d2 = (x - px) ** 2 + (y - py) ** 2
+        if d2 < best_d2:
+            best_d2 = d2
+            best = i
+    return best
+
+
+def _moving_average(values, window: int):
+    """Simple sliding-window moving average."""
+    if window <= 1 or len(values) <= 1:
+        return list(values)
+    half = window // 2
+    N = len(values)
+    out = []
+    for i in range(N):
+        lo = max(0, i - half)
+        hi = min(N, i + half + 1)
+        out.append(sum(values[lo:hi]) / (hi - lo))
+    return out
 
 
 def main(args=None) -> None:

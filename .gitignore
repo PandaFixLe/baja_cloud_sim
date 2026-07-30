@@ -1,3 +1,7 @@
-# Upload everything; only ignore Python bytecode caches
+build/
+install/
+log/
+runtime/
+results/
 __pycache__/
 *.pyc

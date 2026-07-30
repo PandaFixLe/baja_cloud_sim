@@ -4,17 +4,12 @@ import unittest
 from baja_cloud_sim.core import (
     ControllerConfig,
     PlannerConfig,
-    StanleyControllerConfig,
-    StanleyState,
-    augment_path_for_cte,
     generate_boundaries,
     generate_centerline,
     generate_obstacles,
     legacy_path_control,
     plan_frenet_path,
-    preview_curvature,
     signed_lateral,
-    stanley_path_control,
     terrain_height,
 )
 
@@ -68,72 +63,6 @@ class CoreTests(unittest.TestCase):
         command = legacy_path_control(start, yaw_navigation, result.path, ControllerConfig())
         self.assertGreater(command["speed"], 0.0)
         self.assertLessEqual(abs(command["steering"]), math.radians(35.0) + 1e-9)
-
-    # --- v1.1 Stanley tests ---
-
-    def _straight_path(self):
-        return [(float(i), 0.0) for i in range(20)]
-
-    def test_stanley_straight_path_zero_steering(self):
-        path = self._straight_path()
-        state = StanleyState()
-        command = stanley_path_control(
-            (0.0, 0.0), math.pi * 0.5, path,
-            StanleyControllerConfig(), state, dt=0.05,
-        )
-        self.assertGreater(command["speed"], 0.0)
-        self.assertLessEqual(abs(command["steering"]), math.radians(35.0) + 1e-9)
-        self.assertLess(abs(command["cte"]), 1e-9)
-        self.assertTrue(command["state"].initialized)
-
-    def test_stanley_cte_sign_corrects(self):
-        path = self._straight_path()
-        state = StanleyState()
-        # Vehicle 0.5 m to the LEFT of the polyline (positive math-frame CTE,
-        # since signed_lateral uses left-positive convention). With heading_gain=0
-        # the Stanley term dominates: cte > 0 should produce steering < 0
-        # (right turn) per the project's compass-bearing sign convention.
-        command = stanley_path_control(
-            (5.0, 0.5), 0.0, path,
-            StanleyControllerConfig(target_speed=2.5, k_stanley=0.8,
-                                    heading_gain=0.0),
-            state, dt=0.05,
-        )
-        self.assertGreater(command["cte"], 0.0)
-        self.assertLess(command["steering"], 0.0)  # negative = right turn
-
-    def test_stanley_state_persists_across_ticks(self):
-        path = self._straight_path()
-        state = StanleyState()
-        a = stanley_path_control(
-            (0.0, 0.0), math.pi * 0.5, path,
-            StanleyControllerConfig(), state, dt=0.05,
-        )
-        b = stanley_path_control(
-            (1.0, 0.0), math.pi * 0.5, path,
-            StanleyControllerConfig(), a["state"], dt=0.05,
-        )
-        # Same state object must be threaded through.
-        self.assertIs(b["state"], a["state"])
-        # Steering rate-limited to max_steer_rate_deg per period.
-        self.assertLessEqual(
-            abs(b["steering"] - a["steering"]),
-            math.radians(8.0) + 1e-9,
-        )
-
-    def test_stanley_short_path_returns_zero(self):
-        path = [(0.0, 0.0)]
-        command = stanley_path_control(
-            (0.0, 0.0), 0.0, path,
-            StanleyControllerConfig(), StanleyState(), dt=0.05,
-        )
-        self.assertEqual(command["speed"], 0.0)
-        self.assertEqual(command["steering"], 0.0)
-
-    def test_preview_curvature_zero_for_straight(self):
-        path = self._straight_path()
-        augmented = augment_path_for_cte(path)
-        self.assertLess(preview_curvature(augmented, 0, 3.0), 1e-9)
 
 
 if __name__ == "__main__":

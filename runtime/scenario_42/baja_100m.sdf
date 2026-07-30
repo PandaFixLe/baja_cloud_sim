@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <sdf version="1.9">
   <world name="baja_track">
-    <physics name="high_rate_dynamics" type="ode">
+    <physics name="high_rate_dynamics" type="ignored">
       <max_step_size>0.002</max_step_size>
       <real_time_factor>1.0</real_time_factor>
       <real_time_update_rate>500</real_time_update_rate>
@@ -15,7 +15,7 @@
     <scene><ambient>0.55 0.55 0.55 1</ambient><background>0.67 0.80 0.90 1</background><shadows>true</shadows></scene>
     <light name="sun" type="directional"><cast_shadows>true</cast_shadows><pose>0 0 20 0 0 0</pose><diffuse>0.9 0.86 0.75 1</diffuse><specular>0.2 0.2 0.2 1</specular><direction>-0.4 0.2 -0.9</direction></light>
     <model name="base_ground"><static>true</static><pose>32.5000 20.7190 -0.2400 0 0 0</pose><link name="ground"><collision name="collision"><geometry><box><size>95.0000 71.4381 0.2</size></box></geometry><surface><friction><ode><mu>1.1</mu><mu2>1.0</mu2></ode></friction></surface></collision><visual name="visual"><geometry><box><size>95.0000 71.4381 0.2</size></box></geometry><material><ambient>0.16 0.25 0.12 1</ambient><diffuse>0.23 0.34 0.16 1</diffuse><pbr><metal><roughness>1.0</roughness><metalness>0.0</metalness></metal></pbr></material></visual></link></model>
-    <model name="dirt_road"><static>true</static><link name="road"><collision name="collision"><geometry><mesh><uri>file:///home/pandafixle/Desktop/baja_cloud_sim/runtime/scenario_42/dirt_road.obj</uri></mesh></geometry><surface><friction><ode><mu>1.25</mu><mu2>1.0</mu2></ode></friction><contact><ode><kp>800000</kp><kd>220</kd><max_vel>0.08</max_vel><min_depth>0.0005</min_depth></ode></contact></surface></collision><visual name="visual"><geometry><mesh><uri>file:///home/pandafixle/Desktop/baja_cloud_sim/runtime/scenario_42/dirt_road.obj</uri></mesh></geometry><material><ambient>0.30 0.20 0.11 1</ambient><diffuse>0.46 0.31 0.17 1</diffuse><pbr><metal><roughness>1.0</roughness><metalness>0.0</metalness></metal></pbr></material></visual></link></model>
+    <model name="dirt_road"><static>true</static><link name="road"><collision name="collision"><geometry><mesh><uri>file:///home/pandafixle/Desktop/test/baja_cloud_sim/baja_cloud_sim/runtime/scenario_42/dirt_road.obj</uri></mesh></geometry><surface><friction><ode><mu>1.25</mu><mu2>1.0</mu2></ode></friction><contact><ode><kp>800000</kp><kd>220</kd><max_vel>0.08</max_vel><min_depth>0.0005</min_depth></ode></contact></surface></collision><visual name="visual"><geometry><mesh><uri>file:///home/pandafixle/Desktop/test/baja_cloud_sim/baja_cloud_sim/runtime/scenario_42/dirt_road.obj</uri></mesh></geometry><material><ambient>0.30 0.20 0.11 1</ambient><diffuse>0.46 0.31 0.17 1</diffuse><pbr><metal><roughness>1.0</roughness><metalness>0.0</metalness></metal></pbr></material></visual></link></model>
     
     <model name="obstacle_0">
       <static>true</static>
@@ -91,6 +91,6 @@
         </visual>
       </link>
     </model>
-    <include><uri>file:///home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle</uri><name>baja_vehicle</name><pose>0.00000 0.00000 0.52000 0 0 0.00000</pose></include>
+    <include><uri>file:///home/pandafixle/Desktop/test/baja_cloud_sim/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle</uri><name>baja_vehicle</name><pose>0.00000 0.00000 0.52000 0 0 0.00000</pose></include>
   </world>
 </sdf>
