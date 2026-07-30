@@ -55,7 +55,14 @@ def estimate_lqr_state(
     odom_velocity: Tuple[float, float],
     yaw_rate: float,
     reference: Dict[str, float],
+    e_y_int: float = 0.0,
 ) -> np.ndarray:
+    """Augmented 5‑state vector: [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot].
+
+    The integral term ``e_y_int`` is accumulated externally (one sample per
+    control cycle) so the LQR gain includes integral action that eliminates
+    steady‑state lateral offset.
+    """
     dx = position[0] - reference["x"]
     dy = position[1] - reference["y"]
     e_y = -math.sin(reference["yaw"]) * dx + math.cos(reference["yaw"]) * dy
@@ -63,10 +70,16 @@ def estimate_lqr_state(
     vx, vy = odom_velocity
     e_y_dot = -math.sin(reference["yaw"]) * vx + math.cos(reference["yaw"]) * vy
     e_psi_dot = yaw_rate - vx * reference.get("kappa", 0.0)
-    return np.array([e_y, e_y_dot, e_psi, e_psi_dot], dtype=np.float64)
+    return np.array([e_y_int, e_y, e_y_dot, e_psi, e_psi_dot], dtype=np.float64)
 
 
 def build_lqr_matrices(velocity: float, cfg: LQRConfig) -> Tuple[np.ndarray, np.ndarray]:
+    """Build the continuous-time bicycle-model matrices.
+
+    When ``cfg.Q`` has 5 elements the system is augmented with an
+    integrator on lateral error (LQI) so the controller eliminates
+    steady-state offset.
+    """
     v = max(velocity, 0.1)
     m, Iz = cfg.mass, cfg.Iz
     Cf, Cr = cfg.Cf, cfg.Cr
@@ -77,15 +90,29 @@ def build_lqr_matrices(velocity: float, cfg: LQRConfig) -> Tuple[np.ndarray, np.
     a42 = -(lf * Cf - lr * Cr) / (Iz * v)
     a43 = (lf * Cf - lr * Cr) / Iz
     a44 = -(lf * lf * Cf + lr * lr * Cr) / (Iz * v)
-    A = np.array([
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, a22, a23, a24],
-        [0.0, 0.0, 0.0, 1.0],
-        [0.0, a42, a43, a44],
-    ], dtype=np.float64)
     b21 = Cf / (m * v) if v > 0.5 else Cf / (m * 0.5)
     b41 = (lf * Cf) / (Iz * v) if v > 0.5 else (lf * Cf) / (Iz * 0.5)
-    B = np.array([[0.0], [b21], [0.0], [b41]], dtype=np.float64)
+
+    use_integral = len(cfg.Q) == 5
+    if use_integral:
+        # 5-state augmented system: [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot]
+        A = np.array([
+            [0.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, a22, a23, a24],
+            [0.0, 0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, a42, a43, a44],
+        ], dtype=np.float64)
+        B = np.array([[0.0], [0.0], [b21], [0.0], [b41]], dtype=np.float64)
+    else:
+        # legacy 4-state system
+        A = np.array([
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, a22, a23, a24],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0, a42, a43, a44],
+        ], dtype=np.float64)
+        B = np.array([[0.0], [b21], [0.0], [b41]], dtype=np.float64)
     return A, B
 
 
@@ -145,6 +172,7 @@ def compute_lqr_control(
     position, yaw, odom_velocity, yaw_rate,
     reference, speed_profile, s_index, actual_velocity,
     lqr_controller, lqr_cfg, path, ctrl_cfg, yaw_navigation,
+    lqr_e_y_int: float = 0.0,
 ) -> Dict[str, float]:
     v_op = actual_velocity
     if speed_profile and 0 <= s_index < len(speed_profile):
@@ -152,11 +180,22 @@ def compute_lqr_control(
     if actual_velocity >= lqr_cfg.lqr_min_velocity and reference.get("kappa") is not None:
         K = lqr_controller.get_gain(v_op, lqr_cfg)
         if K is not None:
-            state = estimate_lqr_state(position, yaw, odom_velocity, yaw_rate, reference)
+            state = estimate_lqr_state(position, yaw, odom_velocity, yaw_rate,
+                                       reference, e_y_int=lqr_e_y_int)
+            # State layout: [e_y_int?, e_y, e_y_dot, e_psi, e_psi_dot]
+            # Index 0 is e_y_int when len(cfg.Q)==5, otherwise e_y.
+            use_int = len(cfg.Q) == 5
+            i_ey = 1 if use_int else 0
+            i_eydot = 2 if use_int else 1
+            i_epsi = 3 if use_int else 2
+            i_epsidot = 4 if use_int else 3
+            e_y = state[i_ey]
+            e_y_dot = state[i_eydot]
+            e_psi = state[i_epsi]
+            e_psi_dot = state[i_epsidot]
             # Soft deadband: scale lateral gains down when lateral errors are
             # small, but NEVER zero yaw correction — yaw misalignment always
             # gets corrected to prevent overshoot oscillation.
-            e_y, e_y_dot, e_psi, e_psi_dot = state[0], state[1], state[2], state[3]
             lat_in_deadband = abs(e_y) < 0.10 and abs(e_y_dot) < 0.2
             yaw_in_deadband = abs(e_psi) < 0.02 and abs(e_psi_dot) < 0.05
             if lat_in_deadband and yaw_in_deadband:
@@ -166,8 +205,8 @@ def compute_lqr_control(
                 # smoothly scale lateral gains toward zero.
                 lat_scale = max(0.0, min(1.0, abs(e_y) / 0.10))
                 K_scaled = K.copy()
-                K_scaled[0, 0] *= lat_scale   # e_y gain
-                K_scaled[0, 1] *= lat_scale   # e_y_dot gain
+                K_scaled[0, i_ey] *= lat_scale      # e_y gain
+                K_scaled[0, i_eydot] *= lat_scale   # e_y_dot gain
                 delta_fb = -float(K_scaled @ state)
             else:
                 delta_fb = -float(K @ state)
@@ -175,7 +214,7 @@ def compute_lqr_control(
             steering = clamp(delta_fb + delta_ff, -lqr_cfg.max_steering, lqr_cfg.max_steering)
             return {"speed": float(v_op), "steering": steering,
                     "target_x": reference["x"], "target_y": reference["y"],
-                    "heading_error": state[2]}
+                    "heading_error": e_psi, "e_y": float(e_y)}
     return legacy_path_control((position[0], position[1]), yaw_navigation, path, ctrl_cfg)
 
 

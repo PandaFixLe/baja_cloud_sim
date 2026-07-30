@@ -56,7 +56,7 @@ class LQRConfig:
     lf: float = 0.715
     lr: float = 0.715
     max_steering: float = 0.6109
-    Q: Tuple[float, ...] = (3.0, 4.0, 1.5, 2.0)  # [e_y, e_y_dot, e_psi, e_psi_dot]
+    Q: Tuple[float, ...] = (1.0, 3.0, 4.0, 1.5, 2.0)  # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] — 5‑element ⇒ LQI
     R: float = 2.0
     v_norm: float = 1.5
     understeer_gradient: float = 0.0

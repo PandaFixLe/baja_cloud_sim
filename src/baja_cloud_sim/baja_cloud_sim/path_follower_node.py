@@ -142,6 +142,19 @@ class PathFollowerNode(Node):
         self._terrain_min_speed = float(self.get_parameter("terrain_min_speed").value)
         self._centerline_pts: list = []  # [(x,y,z), ...] for nearest-neighbour lookup
 
+        # s-projection reference (replaces Euclidean nearest-neighbour)
+        self.declare_parameter("s_proj_lookahead", 0.8)  # m ahead along path
+        self._s_proj_lookahead = float(self.get_parameter("s_proj_lookahead").value)
+        self._last_proj_idx: int = 0
+
+        # LQI integral state (lateral-error accumulator)
+        self._lqr_e_y_int: float = 0.0
+
+        # curvature-aware pre-deceleration
+        self.declare_parameter("max_lateral_accel", 1.8)
+        self._speed_cfg.max_lateral_accel = float(
+            self.get_parameter("max_lateral_accel").value)
+
         self.command_pub = self.create_publisher(AckermannDriveStamped, "/cmd_control", 10)
         self.lookahead_pub = self.create_publisher(PointStamped, "/lookahead_point", 10)
         self.create_subscription(NavSatFix, "/gps/fix", self._gps_callback, 20)
@@ -156,7 +169,8 @@ class PathFollowerNode(Node):
                                  self._centerline_callback, _latched)
         self._obstacles: list = []  # world-frame obstacle dicts
         self.create_timer(0.05, self._control)
-        mode = "LQR 4x4" if self._enable_lqr else "Pure Pursuit"
+        mode = "LQI 5x5" if (self._enable_lqr and len(self._lqr_cfg.Q) == 5) else \
+               "LQR 4x4" if self._enable_lqr else "Pure Pursuit"
         self.get_logger().info(f"Path follower ready: {mode} control with speed profile")
 
     def _gps_callback(self, message: NavSatFix) -> None:
@@ -316,8 +330,10 @@ class PathFollowerNode(Node):
 
         # ── LQR control (Phase 2) ──
         if self._enable_lqr and len(self._path_curvatures) > 0:
-            nearest = _closest_index(effective_path, self.position)
-            idx = min(nearest, len(effective_path) - 1)
+            idx = _projected_index(effective_path, self._path_arc_lengths,
+                                   self.position, self._last_proj_idx,
+                                   self._s_proj_lookahead)
+            self._last_proj_idx = max(0, idx - 3)  # warm-start next cycle
             reference = {
                 "x": effective_path[idx][0],
                 "y": effective_path[idx][1],
@@ -329,12 +345,16 @@ class PathFollowerNode(Node):
                 self._odom_velocity, self._yaw_rate,
                 reference,
                 self._speed_profile if self._use_speed_profile else None,
-                nearest,
+                idx,
                 self._current_speed,
                 self._lqr, self._lqr_cfg,
                 effective_path, self.config,
                 self.yaw_navigation,
+                lqr_e_y_int=self._lqr_e_y_int,
             )
+            # LQI integral update with anti-windup clamp
+            self._lqr_e_y_int += float(command.get("e_y", 0.0)) * 0.05
+            self._lqr_e_y_int = max(-2.0, min(2.0, self._lqr_e_y_int))
         else:
             command = legacy_path_control(
                 self.position, self.yaw_navigation, effective_path,
@@ -380,6 +400,42 @@ class PathFollowerNode(Node):
         lookahead.point.y = command["target_y"]
         lookahead.point.z = 0.18
         self.lookahead_pub.publish(lookahead)
+
+
+def _projected_index(path, arc_lengths, position, last_idx=0, lookahead_s=0.8) -> int:
+    """s‑coordinate projection: find the path segment that contains the
+    vehicle's perpendicular projection, then look ahead by *lookahead_s*
+    metres of arc length.
+
+    This is the Frenet-equivalent of "where along the path am I?" — it
+    correctly handles curves where Euclidean nearest-neighbour picks a
+    laterally-close but wrong-s point.
+    """
+    if not path or len(path) < 2:
+        return 0
+    px, py = position
+    start = max(0, last_idx)
+    # Walk forward from last known index; find the segment whose
+    # perpendicular projection of the vehicle falls inside [0, 1].
+    for i in range(start, len(path) - 1):
+        ax, ay = path[i]
+        bx, by = path[i + 1]
+        abx, aby = bx - ax, by - ay
+        seg_len2 = abx * abx + aby * aby
+        if seg_len2 < 1e-12:
+            continue
+        t = ((px - ax) * abx + (py - ay) * aby) / seg_len2
+        if 0.0 <= t <= 1.0:
+            s_i = arc_lengths[i] if i < len(arc_lengths) else 0.0
+            s_next = arc_lengths[i + 1] if i + 1 < len(arc_lengths) else s_i
+            s_proj = s_i + t * (s_next - s_i)
+            target_s = s_proj + lookahead_s
+            for j in range(i, len(arc_lengths)):
+                if arc_lengths[j] >= target_s:
+                    return j
+            return len(path) - 1
+    # Fallback: no segment contained the projection — use closest point
+    return _closest_index(path, position)
 
 
 def _closest_index(path, position) -> int:
