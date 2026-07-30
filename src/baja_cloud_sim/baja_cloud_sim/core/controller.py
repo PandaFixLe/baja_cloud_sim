@@ -194,16 +194,19 @@ def compute_lqr_control(
             e_y_dot = state[i_eydot]
             e_psi = state[i_epsi]
             e_psi_dot = state[i_epsidot]
-            # Soft deadband: scale lateral gains down when lateral errors are
-            # small, but NEVER zero yaw correction — yaw misalignment always
-            # gets corrected to prevent overshoot oscillation.
+            # Soft deadband with self-correcting awareness.
+            # If the vehicle is already moving toward the path
+            # (e_y·e_y_dot < 0), reduce lateral gains and let
+            # physics finish the job — prevents "small error,
+            # large counter-steer" behaviour on straights.
+            self_correcting = e_y * e_y_dot < 0
             lat_in_deadband = abs(e_y) < 0.10 and abs(e_y_dot) < 0.2
             yaw_in_deadband = abs(e_psi) < 0.02 and abs(e_psi_dot) < 0.05
             if lat_in_deadband and yaw_in_deadband:
                 delta_fb = 0.0  # all errors negligible — pure feedforward
-            elif lat_in_deadband:
-                # Lateral small but yaw misaligned — keep yaw correction,
-                # smoothly scale lateral gains toward zero.
+            elif lat_in_deadband or self_correcting:
+                # Near path OR velocity toward path — scale lateral
+                # gains to prevent overshoot, keep yaw correction.
                 lat_scale = max(0.0, min(1.0, abs(e_y) / 0.10))
                 K_scaled = K.copy()
                 K_scaled[0, i_ey] *= lat_scale      # e_y gain
