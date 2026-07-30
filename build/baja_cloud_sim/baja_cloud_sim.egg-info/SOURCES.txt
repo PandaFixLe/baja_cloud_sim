@@ -3,10 +3,13 @@ setup.cfg
 setup.py
 baja_cloud_sim/__init__.py
 baja_cloud_sim/actuator_adapter_node.py
+baja_cloud_sim/core.py
 baja_cloud_sim/evaluator_node.py
 baja_cloud_sim/frenet_planner_node.py
+baja_cloud_sim/lqr_controller.py
 baja_cloud_sim/path_follower_node.py
 baja_cloud_sim/scenario_generator.py
+baja_cloud_sim/trajectory_smoother.py
 baja_cloud_sim/truth_perception_node.py
 baja_cloud_sim/video_recorder_node.py
 baja_cloud_sim.egg-info/PKG-INFO

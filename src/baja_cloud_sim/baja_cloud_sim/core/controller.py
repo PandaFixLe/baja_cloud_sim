@@ -100,7 +100,7 @@ def _solve_dare(velocity: float, cfg: LQRConfig) -> Optional[np.ndarray]:
     R_eff = cfg.R * (1.0 + (velocity / cfg.v_norm) ** 2)
     try:
         P = solve_discrete_are(A_d, B_d, np.diag(cfg.Q), np.array([[R_eff]], dtype=np.float64))
-        return np.linalg.inv(R_eff) @ B_d.T @ P
+        return (1.0 / R_eff) * B_d.T @ P
     except (np.linalg.LinAlgError, ValueError):
         return None
 

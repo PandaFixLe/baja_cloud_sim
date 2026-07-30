@@ -34,12 +34,19 @@ def segment_is_safe(
     vehicle_half_length: float,
     vehicle_half_width: float,
     samples: int = 2,
+    proximity_tolerance: float = -0.3,
 ) -> bool:
-    """Check vehicle-front safety along a segment (3 front-weighted samples)."""
+    """Check vehicle-front safety along a segment (3 front-weighted samples).
+
+    *proximity_tolerance* (default -0.3 m) allows transitions that
+    lightly graze the inflated obstacle zone.  This lets the DP planner
+    reach lateral offsets large enough to actually clear the obstacle.
+    The DP cost function still pushes the path away from the obstacle.
+    """
     seg_len = math.hypot(end[0] - start[0], end[1] - start[1])
     if seg_len < 1e-9:
         return all(
-            point_to_oriented_box_clearance(start, obs, vehicle_half_length, vehicle_half_width) > 0.0
+            point_to_oriented_box_clearance(start, obs, vehicle_half_length, vehicle_half_width) > proximity_tolerance
             for obs in obstacles
         )
     dir_x = (end[0] - start[0]) / seg_len
@@ -53,7 +60,7 @@ def segment_is_safe(
         for obstacle in obstacles:
             if point_to_oriented_box_clearance(
                 (fx, fy), obstacle, vehicle_half_length, vehicle_half_width,
-            ) <= 0.0:
+            ) <= proximity_tolerance:
                 return False
     return True
 

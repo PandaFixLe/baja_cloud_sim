@@ -12,6 +12,7 @@ from nav_msgs.msg import Odometry, Path as PathMessage
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32, String
+from visualization_msgs.msg import MarkerArray
 
 from .core import (
     ControllerConfig,
@@ -19,14 +20,17 @@ from .core import (
     LQRController,
     PlannedTrajectory,
     SpeedProfileConfig,
+    base_to_world,
     compute_lqr_control,
     gps_to_local,
     legacy_path_control,
     nav_to_world_yaw,
     nearest_index,
     plan_speed_profile,
+    quaternion_to_yaw,
     signed_lateral,
     point_to_oriented_box_clearance,
+    wrap_angle,
 )
 
 
@@ -93,8 +97,16 @@ class PathFollowerNode(Node):
         # LQR state (Phase 2)
         self._odom_velocity = (0.0, 0.0)  # (vx, vy) world-frame
         self._yaw_rate = 0.0
+        # LQR params exposed to params.yaml (Phase: oscillation damping)
+        self.declare_parameter("lqr_R", 1.0)
+        self.declare_parameter("lqr_v_norm", 2.5)
+        self.declare_parameter("lqr_Q", [5.0, 2.0, 2.0, 1.0])
         self._lqr = LQRController()
-        self._lqr_cfg = LQRConfig()
+        self._lqr_cfg = LQRConfig(
+            R=float(self.get_parameter("lqr_R").value),
+            v_norm=float(self.get_parameter("lqr_v_norm").value),
+            Q=tuple(float(v) for v in self.get_parameter("lqr_Q").value),
+        )
         self._current_speed = 0.0
         self._prev_steering = 0.0  # low-pass filter state (Phase 3.2)
         self.declare_parameter("enable_lqr", True)
@@ -116,7 +128,18 @@ class PathFollowerNode(Node):
         self._use_speed_profile = bool(
             self.get_parameter("use_speed_profile").value
         )
-        self._speed_cfg = SpeedProfileConfig()
+        self.declare_parameter("desired_clearance", 1.2)
+        self._desired_clearance = float(self.get_parameter("desired_clearance").value)
+        self.declare_parameter("min_speed_obstacle", 2.0)
+        self._speed_cfg = SpeedProfileConfig(
+            min_speed_obstacle=float(self.get_parameter("min_speed_obstacle").value),
+        )
+        # terrain-aware speed derating
+        self.declare_parameter("terrain_slope_threshold", 0.06)
+        self._terrain_slope_threshold = float(self.get_parameter("terrain_slope_threshold").value)
+        self.declare_parameter("terrain_min_speed", 1.0)
+        self._terrain_min_speed = float(self.get_parameter("terrain_min_speed").value)
+        self._centerline_z: dict = {}  # s → z lookup
 
         self.command_pub = self.create_publisher(AckermannDriveStamped, "/cmd_control", 10)
         self.lookahead_pub = self.create_publisher(PointStamped, "/lookahead_point", 10)
@@ -125,6 +148,9 @@ class PathFollowerNode(Node):
         self.create_subscription(PathMessage, "/planned_path", self._path_callback, 10)
         self.create_subscription(String, "/planner/status", self._status_callback, 10)
         self.create_subscription(Odometry, "/ground_truth/odom", self._odom_callback, 20)
+        self.create_subscription(MarkerArray, "/obstacle_markers", self._obstacle_callback, 10)
+        self.create_subscription(PathMessage, "/reference_centerline", self._centerline_callback, 10)
+        self._obstacles: list = []  # world-frame obstacle dicts
         self.create_timer(0.05, self._control)
         mode = "LQR 4x4" if self._enable_lqr else "Pure Pursuit"
         self.get_logger().info(f"Path follower ready: {mode} control with speed profile")
@@ -148,6 +174,42 @@ class PathFollowerNode(Node):
             message.twist.twist.linear.x,
             message.twist.twist.linear.y,
         )
+
+    def _obstacle_callback(self, message: MarkerArray) -> None:
+        """Store obstacles in world frame (convert from base_link)."""
+        if self.position is None:
+            return
+        obstacles = []
+        for marker in message.markers:
+            x, y = base_to_world(
+                (marker.pose.position.x, marker.pose.position.y),
+                self.position, self.yaw_world,
+            )
+            q = marker.pose.orientation
+            relative_yaw = quaternion_to_yaw(q.x, q.y, q.z, q.w)
+            obstacles.append({
+                "id": marker.id,
+                "x": x, "y": y,
+                "yaw": wrap_angle(self.yaw_world + relative_yaw),
+                "length": marker.scale.x,
+                "width": marker.scale.y,
+                "height": marker.scale.z,
+            })
+        self._obstacles = obstacles
+
+    def _centerline_callback(self, message: PathMessage) -> None:
+        """Build s→z lookup from reference centreline for terrain derating."""
+        z_map = {}
+        cumulative = 0.0
+        prev = None
+        for pose in message.poses:
+            x, y, z = pose.pose.position.x, pose.pose.position.y, pose.pose.position.z
+            if prev is not None:
+                cumulative += math.hypot(x - prev[0], y - prev[1])
+            z_map[cumulative] = z
+            prev = (x, y)
+        if z_map:
+            self._centerline_z = z_map
 
     def _path_callback(self, message: PathMessage) -> None:
         self.path = [(pose.pose.position.x, pose.pose.position.y) for pose in message.poses]
@@ -193,6 +255,19 @@ class PathFollowerNode(Node):
         self._path_yaws = yaws
 
         self._speed_profile = plan_speed_profile(curvatures, arc, self._speed_cfg)
+        # ── Clearance-aware derating (Phase 4+) ──
+        # Reduce speed near obstacles regardless of path curvature.
+        if self._obstacles:
+            self._speed_profile = _derate_by_clearance(
+                path, self._speed_profile, self._obstacles,
+                self._speed_cfg, self._desired_clearance,
+            )
+        # ── Terrain-aware derating ──
+        if self._centerline_z:
+            self._speed_profile = _derate_by_terrain(
+                arc, self._speed_profile, self._centerline_z,
+                self._terrain_slope_threshold, self._terrain_min_speed,
+            )
         self._path_arc_lengths = arc
 
     def _status_callback(self, message: String) -> None:
@@ -335,6 +410,59 @@ def _moving_average(values, window: int):
         hi = min(N, i + half + 1)
         out.append(sum(values[lo:hi]) / (hi - lo))
     return out
+
+
+def _derate_by_clearance(
+    path, speeds, obstacles, cfg: SpeedProfileConfig, desired_clearance: float,
+) -> List[float]:
+    """Scale target speed down proportionally to obstacle proximity.
+
+    v_out = min_speed_obstacle + (c / desired_clearance) * (v_in - min_speed_obstacle)
+    """
+    if not obstacles or desired_clearance <= 0.0:
+        return speeds
+    from .core import point_to_oriented_box_clearance
+    derated = list(speeds)
+    half_w = cfg.max_lateral_accel  # not used — safety_margin handled by inflate
+    for i, (px, py) in enumerate(path):
+        min_c = float("inf")
+        for obs in obstacles:
+            c = point_to_oriented_box_clearance((px, py), obs, 0.0, 0.75)
+            if c < min_c:
+                min_c = c
+        if min_c < desired_clearance:
+            ratio = max(0.0, min_c / desired_clearance)
+            derated[i] = max(cfg.min_speed_obstacle,
+                             cfg.min_speed_obstacle + ratio * (speeds[i] - cfg.min_speed_obstacle))
+    return derated
+
+
+def _derate_by_terrain(
+    arc: list, speeds: list, z_map: dict,
+    slope_threshold: float, min_speed: float,
+) -> list:
+    """Scale target speed down when terrain gradient exceeds threshold."""
+    if not z_map or len(arc) < 2:
+        return speeds
+    z_sorted = sorted(z_map.items())  # [(s, z), ...]
+    if len(z_sorted) < 2:
+        return speeds
+    derated = list(speeds)
+    for i, s_val in enumerate(arc):
+        # find bracketing s-values in z_map
+        lo, hi = 0, len(z_sorted) - 1
+        while lo < hi - 1:
+            mid = (lo + hi) // 2
+            if z_sorted[mid][0] <= s_val:
+                lo = mid
+            else:
+                hi = mid
+        ds = z_sorted[hi][0] - z_sorted[lo][0]
+        if ds > 0.01:
+            slope = abs(z_sorted[hi][1] - z_sorted[lo][1]) / ds
+            if slope > slope_threshold:
+                derated[i] = min(derated[i], min_speed)
+    return derated
 
 
 def main(args=None) -> None:
