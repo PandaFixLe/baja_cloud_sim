@@ -151,6 +151,8 @@ class PathFollowerNode(Node):
 
         # LQI integral state (lateral-error accumulator)
         self._lqr_e_y_int: float = 0.0
+        # Triggered lateral LQR state
+        self._lqr_lateral_active: bool = False
 
         # curvature-aware pre-deceleration
         self.declare_parameter("max_lateral_accel", 1.8)
@@ -357,8 +359,10 @@ class PathFollowerNode(Node):
                 effective_path, self.config,
                 self.yaw_navigation,
                 lqr_e_y_int=self._lqr_e_y_int,
+                lqr_lateral_active=self._lqr_lateral_active,
             )
-            # LQI integral update with anti-windup clamp
+            # Update persistent LQR state for next cycle
+            self._lqr_lateral_active = bool(command.get("lqr_lateral_active", False))
             self._lqr_e_y_int += float(command.get("e_y", 0.0)) * 0.05
             self._lqr_e_y_int = max(-0.5, min(0.5, self._lqr_e_y_int))
         else:

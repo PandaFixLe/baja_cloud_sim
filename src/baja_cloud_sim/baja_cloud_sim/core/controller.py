@@ -168,11 +168,24 @@ def compute_feedforward(curvature: float, velocity: float, cfg: LQRConfig) -> fl
     return kin + k_us * velocity * velocity * curvature
 
 
+def _lateral_thresholds(velocity: float) -> tuple:
+    """Return (enter_m, exit_m) — speed‑adaptive lateral hysteresis.
+
+    At low speed LQR gains are higher and the vehicle is more
+    manoeuvrable → tighter thresholds.  At high speed give more
+    room to glide.
+    """
+    enter = 0.08 + 0.04 * velocity   # v=1.0→0.12  v=2.5→0.18  v=5.0→0.28
+    exit_ = enter * 0.35              # 35 % hysteresis
+    return (enter, exit_)
+
+
 def compute_lqr_control(
     position, yaw, odom_velocity, yaw_rate,
     reference, speed_profile, s_index, actual_velocity,
     lqr_controller, lqr_cfg, path, ctrl_cfg, yaw_navigation,
     lqr_e_y_int: float = 0.0,
+    lqr_lateral_active: bool = False,
 ) -> Dict[str, float]:
     v_op = actual_velocity
     if speed_profile and 0 <= s_index < len(speed_profile):
@@ -194,31 +207,48 @@ def compute_lqr_control(
             e_y_dot = state[i_eydot]
             e_psi = state[i_epsi]
             e_psi_dot = state[i_epsidot]
-            # Soft deadband with self-correcting awareness.
-            # If the vehicle is already moving toward the path
-            # (e_y·e_y_dot < 0), reduce lateral gains and let
-            # physics finish the job — prevents "small error,
-            # large counter-steer" behaviour on straights.
+
+            # ── Triggered lateral LQR ──
+            # Instead of correcting every tiny lateral error (which
+            # causes constant micro-steering), only engage lateral
+            # correction when cross-track error exceeds a speed‑
+            # adaptive threshold.  Yaw correction stays active at
+            # reduced gain in "glide" mode so the vehicle naturally
+            # converges to the path.
+            th_enter, th_exit = _lateral_thresholds(v_op)
+            cross_track = abs(e_y)
             self_correcting = e_y * e_y_dot < 0
-            lat_in_deadband = abs(e_y) < 0.10 and abs(e_y_dot) < 0.2
-            yaw_in_deadband = abs(e_psi) < 0.02 and abs(e_psi_dot) < 0.05
-            if lat_in_deadband and yaw_in_deadband:
-                delta_fb = 0.0  # all errors negligible — pure feedforward
-            elif lat_in_deadband or self_correcting:
-                # Near path OR velocity toward path — scale lateral
-                # gains to prevent overshoot, keep yaw correction.
-                lat_scale = max(0.0, min(1.0, abs(e_y) / 0.10))
-                K_scaled = K.copy()
-                K_scaled[0, i_ey] *= lat_scale      # e_y gain
-                K_scaled[0, i_eydot] *= lat_scale   # e_y_dot gain
-                delta_fb = -float(K_scaled @ state)
+
+            if not lqr_lateral_active:
+                if cross_track > th_enter:
+                    lqr_lateral_active = True
             else:
-                delta_fb = -float(K @ state)
+                if cross_track < th_exit:
+                    lqr_lateral_active = False
+                elif self_correcting and cross_track < th_enter * 1.3:
+                    lqr_lateral_active = False  # early exit
+
+            # Gain scaling: lateral gains are 0 in glide, 1 in correction.
+            # Yaw gains are always active (0.3× in glide, 1× in correction).
+            lat_gain = 1.0 if lqr_lateral_active else 0.0
+            yaw_gain = 1.0 if lqr_lateral_active else 0.3
+
+            K_scaled = K.copy()
+            K_scaled[0, i_ey] *= lat_gain
+            K_scaled[0, i_eydot] *= lat_gain
+            K_scaled[0, i_epsi] *= yaw_gain
+            K_scaled[0, i_epsidot] *= yaw_gain
+            # integral gain: keep active proportional to lateral gain
+            if use_int:
+                K_scaled[0, 0] *= lat_gain
+
+            delta_fb = -float(K_scaled @ state)
             delta_ff = compute_feedforward(reference.get("kappa", 0.0), v_op, lqr_cfg)
             steering = clamp(delta_fb + delta_ff, -lqr_cfg.max_steering, lqr_cfg.max_steering)
             return {"speed": float(v_op), "steering": steering,
                     "target_x": reference["x"], "target_y": reference["y"],
-                    "heading_error": e_psi, "e_y": float(e_y)}
+                    "heading_error": e_psi, "e_y": float(e_y),
+                    "lqr_lateral_active": lqr_lateral_active}
     return legacy_path_control((position[0], position[1]), yaw_navigation, path, ctrl_cfg)
 
 
