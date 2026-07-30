@@ -383,7 +383,7 @@ class PathFollowerNode(Node):
 
         # Speed rate limiter: prevent sudden acceleration after
         # straightening (which would make the next turn harder).
-        MAX_SPEED_STEP = 0.10   # +2.0 m/s² acceleration
+        MAX_SPEED_STEP = 0.05   # +1.0 m/s² gentle acceleration
         MAX_SPEED_DECEL = 0.25  # −5.0 m/s² deceleration (emergency stop)
         delta_spd = target_speed - self._prev_target_speed
         clamped_spd = max(-MAX_SPEED_DECEL, min(MAX_SPEED_STEP, delta_spd))

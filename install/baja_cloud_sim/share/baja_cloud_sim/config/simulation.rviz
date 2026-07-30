@@ -1,1 +1,132 @@
-/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/config/simulation.rviz
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Tool Properties
+    Name: Tool Properties
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.45
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 92; 105; 112
+      Enabled: true
+      Name: Metric Grid
+      Plane: XY
+      Plane Cell Count: 120
+      Reference Frame: map
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+      Enabled: true
+      Name: Baja Vehicle
+      Visual Enabled: true
+      Collision Enabled: false
+      Alpha: 1
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Centerline Waypoints
+      Line Style: Lines
+      Line Width: 0.05
+      Color: 255; 170; 30
+      Alpha: 0.9
+      Buffer Length: 1
+      Topic:
+        Value: /reference_centerline
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Planned Trajectory
+      Line Style: Billboards
+      Line Width: 0.10
+      Color: 60; 255; 100
+      Alpha: 1
+      Buffer Length: 1
+      Topic:
+        Value: /planned_path
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Actual Trajectory
+      Line Style: Billboards
+      Line Width: 0.06
+      Color: 255; 55; 170
+      Alpha: 1
+      Buffer Length: 1
+      Topic:
+        Value: /actual_path
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Truth Road Boundaries
+      Topic:
+        Value: /road_boundary_markers
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Truth Obstacle Boxes
+      Topic:
+        Value: /obstacle_markers
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Planner Inflation And State
+      Topic:
+        Value: /planning_debug
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Closed Loop Metrics
+      Topic:
+        Value: /simulation/metrics
+    - Class: rviz_default_plugins/PointStamped
+      Enabled: true
+      Name: Lookahead Point
+      Color: 255; 245; 60
+      Radius: 0.30
+      History Length: 1
+      Topic:
+        Value: /lookahead_point
+    - Class: rviz_default_plugins/Odometry
+      Enabled: false
+      Name: Ground Truth Odometry
+      Shape:
+        Color: 80; 170; 255
+        Alpha: 1
+        Axes Length: 1
+        Axes Radius: 0.1
+        Head Length: 0.3
+        Head Radius: 0.15
+        Shaft Length: 1
+        Shaft Radius: 0.05
+      Topic:
+        Value: /ground_truth/odom
+  Enabled: true
+  Global Options:
+    Background Color: 8; 15; 20
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: Baja Planning Control
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetInitialPose
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Top-Down Track
+      Angle: 0
+      Scale: 45
+      X: 28
+      Y: 0
+Window Geometry:
+  Height: 960
+  Width: 1600
+  X: 80
+  Y: 40
+  Displays:
+    collapsed: false
+  Selection:
+    collapsed: true
+  Tool Properties:
+    collapsed: true

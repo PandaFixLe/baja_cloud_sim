@@ -1,10 +1,10 @@
 #!/usr/bin/python3
-# EASY-INSTALL-ENTRY-SCRIPT: 'baja-cloud-sim','console_scripts','generate_scenario'
+# EASY-INSTALL-ENTRY-SCRIPT: 'baja-cloud-sim==1.1.0','console_scripts','generate_scenario'
 import re
 import sys
 
 # for compatibility with easy_install; see #2198
-__requires__ = 'baja-cloud-sim'
+__requires__ = 'baja-cloud-sim==1.1.0'
 
 try:
     from importlib.metadata import distribution
@@ -30,4 +30,4 @@ globals().setdefault('load_entry_point', importlib_load_entry_point)
 
 if __name__ == '__main__':
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
-    sys.exit(load_entry_point('baja-cloud-sim', 'console_scripts', 'generate_scenario')())
+    sys.exit(load_entry_point('baja-cloud-sim==1.1.0', 'console_scripts', 'generate_scenario')())
