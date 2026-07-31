@@ -175,8 +175,8 @@ def _lateral_thresholds(velocity: float) -> tuple:
     manoeuvrable → tighter thresholds.  At high speed give more
     room to glide.
     """
-    enter = 0.06 + 0.03 * velocity   # v=1.0→0.09  v=2.5→0.135
-    exit_ = enter * 0.35              # 35 % hysteresis
+    enter = 0.10 + 0.03 * velocity   # v=1.0→0.13  v=2.5→0.175
+    exit_ = enter * 0.5               # 50 % hysteresis
     return (enter, exit_)
 
 

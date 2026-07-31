@@ -340,11 +340,29 @@ class PathFollowerNode(Node):
         # LQR adds a continuous feedback-only residual, looking at the
         # SAME lookahead target so the two controllers never fight.
 
-        # 1. Pure pursuit: base steering (always runs)
+        # 1. Curvature-adaptive lookahead: shorten on curves so pure
+        #    pursuit enters bends progressively instead of snapping
+        #    toward a far-ahead target.
+        nearest_pp = _closest_index(effective_path, self.position)
+        max_k = 0.0
+        cumulative = 0.0
+        for j in range(nearest_pp, min(nearest_pp + 20, len(effective_path) - 1)):
+            cumulative += math.hypot(effective_path[j+1][0] - effective_path[j][0],
+                                     effective_path[j+1][1] - effective_path[j][1])
+            if j < len(self._path_curvatures):
+                max_k = max(max_k, abs(self._path_curvatures[j]))
+            if cumulative > 5.0:
+                break
+        curve_scale = 1.0 / (1.0 + max_k * 3.0)
+        saved_lookahead = self.config.lookahead_distance
+        self.config.lookahead_distance = max(0.8, saved_lookahead * curve_scale)
+
+        # 2. Pure pursuit: base steering (with adaptive lookahead)
         pp_command = legacy_path_control(
             self.position, self.yaw_navigation, effective_path,
             self.config, current_speed=self._current_speed,
         )
+        self.config.lookahead_distance = saved_lookahead  # restore
         base_steering = float(pp_command["steering"])
 
         # 2. LQR residual: reference = PP lookahead target (unified)
