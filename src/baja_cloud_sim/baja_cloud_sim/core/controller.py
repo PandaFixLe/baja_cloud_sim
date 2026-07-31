@@ -231,7 +231,7 @@ def compute_lqr_control(
             # Gain scaling: lateral gains are 0 in glide, 1 in correction.
             # Yaw gains are always active (0.3× in glide, 1× in correction).
             lat_gain = 1.0 if lqr_lateral_active else 0.0
-            yaw_gain = 1.0 if lqr_lateral_active else 0.3
+            yaw_gain = 1.0 if lqr_lateral_active else 0.25
 
             K_scaled = K.copy()
             K_scaled[0, i_ey] *= lat_gain
