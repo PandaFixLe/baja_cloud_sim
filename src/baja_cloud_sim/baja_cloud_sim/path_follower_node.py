@@ -347,24 +347,32 @@ class PathFollowerNode(Node):
         )
         base_steering = float(pp_command["steering"])
 
-        # 2. LQR residual: unified reference = PP lookahead target
+        # 2. LQR residual: reference = PP lookahead target (unified)
         residual_steering = 0.0
         command = pp_command  # default keys from pure pursuit
         if self._enable_lqr and len(self._path_curvatures) > 0:
-            # Reference = pure pursuit's lookahead point (unified!)
-            target_x, target_y = pp_command["target_x"], pp_command["target_y"]
-            target_yaw = math.atan2(target_y - self.position[1],
-                                    target_x - self.position[0])
+            # e_y from s-projection (correct lateral deviation for RECOVERY)
+            idx = _projected_index(effective_path, self._path_arc_lengths,
+                                   self.position, self._last_proj_idx,
+                                   self._s_proj_lookahead)
+            self._last_proj_idx = max(0, idx - 3)
+            ref_yaw = self._path_yaws[idx] if idx < len(self._path_yaws) else self.yaw_world
             command["e_y"] = signed_lateral(self.position,
-                {"x": target_x, "y": target_y, "yaw": target_yaw})
+                {"x": effective_path[idx][0], "y": effective_path[idx][1],
+                 "yaw": ref_yaw})
+            # LQR reference = PP lookahead point (unified with base steering)
+            target_x, target_y = pp_command["target_x"], pp_command["target_y"]
+            # Find path yaw at the lookahead point (may differ from s-proj yaw on curves)
+            pp_idx = _closest_index(effective_path, (target_x, target_y))
+            pp_yaw = self._path_yaws[pp_idx] if pp_idx < len(self._path_yaws) else self.yaw_world
             ref_unified = {"x": target_x, "y": target_y,
-                           "yaw": target_yaw, "kappa": 0.0}
+                           "yaw": pp_yaw, "kappa": 0.0}
             lqr_cmd = compute_lqr_control(
                 self.position, self.yaw_world,
                 self._odom_velocity, self._yaw_rate,
                 ref_unified,
                 self._speed_profile if self._use_speed_profile else None,
-                0,
+                idx,
                 self._current_speed,
                 self._lqr, self._lqr_cfg,
                 effective_path, self.config,
