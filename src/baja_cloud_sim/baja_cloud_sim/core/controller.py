@@ -171,6 +171,10 @@ def compute_lqr_control(
                 delta_fb = -float(K_scaled @ state)
             else:
                 delta_fb = -float(K @ state)
+            # Smooth curvature-based gain scaling: no hard switch
+            abs_k = abs(reference.get("kappa", 0.0))
+            curve_scale = 1.0 / (1.0 + abs_k * 5.0)
+            delta_fb *= curve_scale
             delta_ff = compute_feedforward(reference.get("kappa", 0.0), v_op, lqr_cfg)
             steering = clamp(delta_fb + delta_ff, -lqr_cfg.max_steering, lqr_cfg.max_steering)
             return {"speed": float(v_op), "steering": steering,

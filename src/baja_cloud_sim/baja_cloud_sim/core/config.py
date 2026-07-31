@@ -37,10 +37,10 @@ class PlanResult:
 @dataclass
 class SpeedProfileConfig:
     max_speed: float = 5.0
-    max_lateral_accel: float = 2.5
-    max_accel: float = 2.0
-    max_decel: float = -2.5
-    min_speed: float = 1.0
+    max_lateral_accel: float = 0.8
+    max_accel: float = 2.5
+    max_decel: float = 5.0
+    min_speed: float = 2.0
     min_speed_obstacle: float = 2.0
     max_jerk: float = 4.0
     curvature_smooth_window: int = 5
@@ -55,9 +55,10 @@ class LQRConfig:
     Cr: float = 35000.0
     lf: float = 0.715
     lr: float = 0.715
-    max_steering: float = 0.6109
+    max_steering: float = 0.4363
     Q: Tuple[float, ...] = (3.0, 4.0, 1.5, 2.0)  # [e_y, e_y_dot, e_psi, e_psi_dot]
-    R: float = 2.0
+    R: float = 3.0
+    feedback_limit_deg: float = 20.0
     v_norm: float = 1.5
     understeer_gradient: float = 0.0
     dt: float = 0.05  # must match the control-loop timer period (path_follower_node._control)

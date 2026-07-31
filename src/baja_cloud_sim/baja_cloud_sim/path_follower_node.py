@@ -51,7 +51,7 @@ def _evaluate_state(
 ) -> _ControlState:
     """3-level state machine with hysteresis (Phase 3.3)."""
     if current == _ControlState.NORMAL:
-        if (min_clearance < 0.05 or consecutive_infeasible >= 30):
+        if (min_clearance < 0.05 or consecutive_infeasible >= 100):
             return _ControlState.EMERGENCY
         if (consecutive_infeasible >= 3
                 or tracking_error > 0.8
@@ -59,7 +59,7 @@ def _evaluate_state(
             return _ControlState.SLOWDOWN
         return _ControlState.NORMAL
     elif current == _ControlState.SLOWDOWN:
-        if (min_clearance < 0.05 or consecutive_infeasible >= 30):
+        if (min_clearance < 0.05 or consecutive_infeasible >= 100):
             return _ControlState.EMERGENCY
         if (consecutive_feasible >= 5
                 and tracking_error < 0.3
@@ -292,7 +292,7 @@ class PathFollowerNode(Node):
                         {"x": center_ref[0], "y": center_ref[1], "yaw": self.yaw_world}))
         self._ctrl_state = _evaluate_state(
             self._infeasible_count, self._consecutive_feasible,
-            track_err, 1.0,  # clearance not available in node
+            track_err, 999.0,  # clearance in node
             self._ctrl_state,
         )
 
@@ -318,11 +318,31 @@ class PathFollowerNode(Node):
         if self._enable_lqr and len(self._path_curvatures) > 0:
             nearest = _closest_index(effective_path, self.position)
             idx = min(nearest, len(effective_path) - 1)
+            near_end = min(nearest + 12, len(effective_path))
+            pos_k = 0; neg_k = 0; any_k = 0
+            for j in range(nearest, near_end):
+                k = self._path_curvatures[j] if j < len(self._path_curvatures) else 0.0
+                if abs(k) > 0.03: any_k += 1
+                if k > 0: pos_k += 1
+                elif k < 0: neg_k += 1
+            if any_k >= 6 and pos_k != neg_k:
+                k_w = 0.0; w_sum = 0.0
+                for j in range(nearest, near_end):
+                    w = 2.0 ** (-(j - nearest) / 2.0)
+                    k = self._path_curvatures[j] if j < len(self._path_curvatures) else 0.0
+                    k_w += w * k; w_sum += w
+                k_target = k_w / w_sum
+                best_j = nearest; best_d = float('inf')
+                for j in range(nearest, near_end):
+                    k = self._path_curvatures[j] if j < len(self._path_curvatures) else 0.0
+                    if abs(k - k_target) < best_d: best_d = abs(k - k_target); best_j = j
+            else:
+                best_j = idx
             reference = {
-                "x": effective_path[idx][0],
-                "y": effective_path[idx][1],
-                "yaw": self._path_yaws[idx] if idx < len(self._path_yaws) else self.yaw_world,
-                "kappa": self._path_curvatures[idx] if idx < len(self._path_curvatures) else 0.0,
+                "x": effective_path[best_j][0],
+                "y": effective_path[best_j][1],
+                "yaw": self._path_yaws[best_j] if best_j < len(self._path_yaws) else self.yaw_world,
+                "kappa": self._path_curvatures[best_j] if best_j < len(self._path_curvatures) else 0.0,
             }
             command = compute_lqr_control(
                 self.position, self.yaw_world,
@@ -346,7 +366,12 @@ class PathFollowerNode(Node):
         if self._use_speed_profile and len(self._speed_profile) > 0:
             nearest = _closest_index(effective_path, self.position)
             if nearest < len(self._speed_profile):
-                target_speed = self._speed_profile[nearest]
+                look_pts = max(10, min(30, int(self._current_speed * 5)))
+                far_end = min(nearest + look_pts, len(self._speed_profile))
+                min_s = self._speed_profile[nearest]
+                for j in range(nearest, far_end):
+                    if self._speed_profile[j] < min_s: min_s = self._speed_profile[j]
+                target_speed = min(target_speed, min_s)
 
         # Phase 3.4: state-based speed override
         if self._ctrl_state == _ControlState.EMERGENCY:
@@ -355,6 +380,9 @@ class PathFollowerNode(Node):
         elif self._ctrl_state == _ControlState.SLOWDOWN:
             target_speed = min(target_speed, 1.0)
 
+        if abs(track_err) > 0.3:
+            target_speed = max(target_speed, 2.5)
+
         message = AckermannDriveStamped()
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = "base_link"
@@ -362,10 +390,10 @@ class PathFollowerNode(Node):
         # Steering rate limiter: max 4° per step (0.05 s) → ~80°/s
         # Allow up to 2× rate when yaw error is large (>5°), so the
         # vehicle can recover heading quickly after a disturbance.
-        MAX_STEER_STEP = math.radians(4.0)
+        MAX_STEER_STEP = math.radians(10.0)
         heading_err = float(command.get("heading_error", 0.0))
         if abs(heading_err) > math.radians(5.0):
-            MAX_STEER_STEP = math.radians(8.0)  # ~160°/s for fast recovery
+            MAX_STEER_STEP = math.radians(15.0)  # ~300°/s for fast recovery
         raw_steer = float(command["steering"])
         delta = raw_steer - self._prev_steering
         clamped_delta = max(-MAX_STEER_STEP, min(MAX_STEER_STEP, delta))
