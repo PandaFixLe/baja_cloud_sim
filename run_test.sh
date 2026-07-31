@@ -40,7 +40,7 @@ if [[ "$USE_VIDEO" == "true" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
 fi
 
 ros2 run baja_cloud_sim generate_scenario --output "$GENERATED" --seed "$SEED" --obstacles "$OBSTACLES"
-exec ros2 launch baja_cloud_sim simulation.launch.py \
+ros2 launch baja_cloud_sim simulation.launch.py \
   world_file:="$GENERATED/baja_100m.sdf" \
   scenario_file:="$GENERATED/scenario.json" \
   results_dir:="$RESULTS" \
@@ -48,3 +48,11 @@ exec ros2 launch baja_cloud_sim simulation.launch.py \
   use_gz_gui:="$USE_GZ_GUI" \
   use_video:="$USE_VIDEO" \
   video_path:="$VIDEO_PATH"
+
+# Auto-generate plots after run
+LATEST_CSV=$(ls -t "$RESULTS"/tracking_*.csv 2>/dev/null | head -1)
+if [ -n "$LATEST_CSV" ]; then
+  echo ""
+  echo "=== Auto-generating plots ==="
+  python3 "$SCRIPT_DIR/tools/plot_tracking.py" "$LATEST_CSV"
+fi
