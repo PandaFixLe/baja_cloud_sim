@@ -384,8 +384,25 @@ class PathFollowerNode(Node):
             # Find path yaw at the lookahead point (may differ from s-proj yaw on curves)
             pp_idx = _closest_index(effective_path, (target_x, target_y))
             pp_yaw = self._path_yaws[pp_idx] if pp_idx < len(self._path_yaws) else self.yaw_world
+            # Selective feedforward: only on consistent same-sign curvature
+            near_end = min(idx + 12, len(effective_path))
+            pos_k = neg_k = any_k = 0
+            for j in range(idx, near_end):
+                k = self._path_curvatures[j] if j < len(self._path_curvatures) else 0.0
+                if abs(k) > 0.03: any_k += 1
+                if k > 0: pos_k += 1
+                elif k < 0: neg_k += 1
+            if any_k >= 6 and pos_k != neg_k:
+                k_w = w_sum = 0.0
+                for j in range(idx, near_end):
+                    w = 2.0 ** (-(j - idx) / 2.0)
+                    k = self._path_curvatures[j] if j < len(self._path_curvatures) else 0.0
+                    k_w += w * k; w_sum += w
+                kappa = k_w / w_sum
+            else:
+                kappa = 0.0
             ref_unified = {"x": target_x, "y": target_y,
-                           "yaw": pp_yaw, "kappa": 0.0}
+                           "yaw": pp_yaw, "kappa": kappa}
             lqr_cmd = compute_lqr_control(
                 self.position, self.yaw_world,
                 self._odom_velocity, self._yaw_rate,
@@ -428,23 +445,15 @@ class PathFollowerNode(Node):
         elif self._ctrl_state == _ControlState.SLOWDOWN:
             target_speed = min(target_speed, 1.0)
 
-        # Unified RECOVERY mode with exit delay.
-        # When the vehicle enters recovery, speed is capped for a
-        # minimum hold period so it doesn't re-accelerate while the
-        # chassis is still settling from the correction.
-        heading_err = float(command.get("heading_error", 0.0))
+        # Simple cross-track speed cap — gentler than the old RECOVERY gate.
         cross_track = float(command.get("e_y", 0.0))
-        # Speed-adaptive threshold (same formula as LQR's _lateral_thresholds)
-        recov_th = 0.10 + 0.03 * self._current_speed
-        off_track = abs(cross_track) > recov_th
-        misaligned = abs(heading_err) > math.radians(12.0)
-        EXIT_DELAY = 15   # ~0.75 s @ 20 Hz
-        if off_track and misaligned:
-            self._recovery_hold = EXIT_DELAY
-            target_speed = min(target_speed, 1.0)
-        elif self._recovery_hold > 0:
-            self._recovery_hold -= 1
-            target_speed = min(target_speed, 1.0)
+        if abs(cross_track) > 0.20:
+            target_speed = min(target_speed, 1.2)
+        elif abs(cross_track) > 0.10:
+            target_speed = min(target_speed, 1.8)
+        # If way off-track, maintain at least 2 m/s for steering authority
+        if abs(track_err) > 0.5:
+            target_speed = max(target_speed, 2.0)
 
         # Speed rate limiter
         MAX_SPEED_STEP = 0.075  # +1.5 m/s² gentle acceleration

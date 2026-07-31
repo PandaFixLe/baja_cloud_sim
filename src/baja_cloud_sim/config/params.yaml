@@ -31,9 +31,9 @@ path_follower_node:
     use_speed_profile: true
     desired_clearance: 3.5
     min_speed_obstacle: 2.0
-    lqr_R: 2.0
+    lqr_R: 4.0
     lqr_v_norm: 1.5
-    lqr_Q: [0.1, 1.5, 3.0, 4.0, 2.0] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot]
+    lqr_Q: [0.05, 5.0, 1.0, 3.0, 0.5] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot]
     s_proj_lookahead: 0.8
     max_lateral_accel: 1.8                # curvature ceiling (was 2.5 default)
     terrain_slope_threshold: 0.06

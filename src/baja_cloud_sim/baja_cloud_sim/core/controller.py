@@ -235,6 +235,8 @@ def compute_lqr_control(
                 K_scaled[0, 0] *= lat_gain
 
             delta_fb = -float(K_scaled @ state)
+            # Hard feedback cap: LQR only provides fine trimming (±3°)
+            delta_fb = clamp(delta_fb, -math.radians(3.0), math.radians(3.0))
             delta_ff = compute_feedforward(reference.get("kappa", 0.0), v_op, lqr_cfg)
             steering = clamp(delta_fb + delta_ff, -lqr_cfg.max_steering, lqr_cfg.max_steering)
             return {"speed": float(v_op), "steering": steering,
