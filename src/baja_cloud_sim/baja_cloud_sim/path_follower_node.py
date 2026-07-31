@@ -159,6 +159,7 @@ class PathFollowerNode(Node):
         self._speed_cfg.max_lateral_accel = float(
             self.get_parameter("max_lateral_accel").value)
 
+        self._diag_tick = 0  # speed-profile diagnostic counter
         self.command_pub = self.create_publisher(AckermannDriveStamped, "/cmd_control", 10)
         self.lookahead_pub = self.create_publisher(PointStamped, "/lookahead_point", 10)
         self.create_subscription(NavSatFix, "/gps/fix", self._gps_callback, 20)
@@ -389,7 +390,7 @@ class PathFollowerNode(Node):
             pos_k = neg_k = any_k = 0
             for j in range(idx, near_end):
                 k = self._path_curvatures[j] if j < len(self._path_curvatures) else 0.0
-                if abs(k) > 0.03: any_k += 1
+                if abs(k) > 0.08: any_k += 1
                 if k > 0: pos_k += 1
                 elif k < 0: neg_k += 1
             if any_k >= 6 and pos_k != neg_k:
@@ -437,6 +438,12 @@ class PathFollowerNode(Node):
             nearest = _closest_index(effective_path, self.position)
             if nearest < len(self._speed_profile):
                 target_speed = self._speed_profile[nearest]
+                if self._diag_tick < 40:
+                    self._diag_tick += 1
+                    self.get_logger().info(
+                        f'[SPEED-DIAG #{self._diag_tick}] sp[{nearest}]={target_speed:.1f} '
+                        f'actual_v={self._current_speed:.1f} min_sp={min(self._speed_profile):.1f} '
+                        f'max_sp={max(self._speed_profile):.1f}')
 
         # Phase 3.4: state-based speed override
         if self._ctrl_state == _ControlState.EMERGENCY:
@@ -445,18 +452,19 @@ class PathFollowerNode(Node):
         elif self._ctrl_state == _ControlState.SLOWDOWN:
             target_speed = min(target_speed, 1.0)
 
-        # Simple cross-track speed cap — gentler than the old RECOVERY gate.
+        # Speed cap: distance OR heading — either one large → slow down
         cross_track = float(command.get("e_y", 0.0))
-        if abs(cross_track) > 0.20:
+        heading_err = float(command.get("heading_error", 0.0))
+        if abs(cross_track) > 0.20 or abs(heading_err) > math.radians(25.0):
             target_speed = min(target_speed, 1.2)
-        elif abs(cross_track) > 0.10:
+        elif abs(cross_track) > 0.10 or abs(heading_err) > math.radians(12.0):
             target_speed = min(target_speed, 1.8)
         # If way off-track, maintain at least 2 m/s for steering authority
         if abs(track_err) > 0.5:
             target_speed = max(target_speed, 2.0)
 
         # Speed rate limiter
-        MAX_SPEED_STEP = 0.20   # +4.0 m/s² acceleration
+        MAX_SPEED_STEP = 0.10   # +4.0 m/s² acceleration
         MAX_SPEED_DECEL = 0.25  # −5.0 m/s² deceleration (emergency stop)
         delta_spd = target_speed - self._prev_target_speed
         clamped_spd = max(-MAX_SPEED_DECEL, min(MAX_SPEED_STEP, delta_spd))

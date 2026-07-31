@@ -43,7 +43,7 @@ class SpeedProfileConfig:
     min_speed: float = 1.0
     min_speed_obstacle: float = 2.0
     max_jerk: float = 4.0
-    curvature_smooth_window: int = 5
+    curvature_smooth_window: int = 10
 
 
 @dataclass
