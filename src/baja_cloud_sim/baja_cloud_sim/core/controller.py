@@ -185,7 +185,6 @@ def compute_lqr_control(
     reference, speed_profile, s_index, actual_velocity,
     lqr_controller, lqr_cfg, path, ctrl_cfg, yaw_navigation,
     lqr_e_y_int: float = 0.0,
-    low_speed_mode: bool = False,
 ) -> Dict[str, float]:
     v_op = actual_velocity
     if speed_profile and 0 <= s_index < len(speed_profile):
@@ -208,22 +207,23 @@ def compute_lqr_control(
             e_psi = state[i_epsi]
             e_psi_dot = state[i_epsidot]
 
-            # ── Lateral gain ──
-            # Low‑speed mode: full gains always (gentle at low v).
-            # High‑speed mode: continuous smoothstep to avoid jolts.
-            if low_speed_mode:
+            # ── Continuous lateral gain (smoothstep) ──
+            # Instead of a hard on/off trigger, the lateral gain ramps
+            # linearly from 0 at th_exit to 1 at th_enter.  Yaw gain
+            # ramps from 25 % to 100 % over the same band.  This
+            # eliminates the discontinuity that caused steering jolts
+            # at the threshold boundary.
+            th_enter, th_exit = _lateral_thresholds(v_op)
+            cross_track = abs(e_y)
+
+            if cross_track < th_exit:
+                lat_gain = 0.0
+            elif cross_track > th_enter:
                 lat_gain = 1.0
-                yaw_gain = 1.0
             else:
-                th_enter, th_exit = _lateral_thresholds(v_op)
-                cross_track = abs(e_y)
-                if cross_track < th_exit:
-                    lat_gain = 0.0
-                elif cross_track > th_enter:
-                    lat_gain = 1.0
-                else:
-                    lat_gain = (cross_track - th_exit) / (th_enter - th_exit)
-                yaw_gain = 0.3 + 0.7 * lat_gain
+                lat_gain = (cross_track - th_exit) / (th_enter - th_exit)
+
+            yaw_gain = 0.3 + 0.7 * lat_gain
 
             K_scaled = K.copy()
             K_scaled[0, i_ey] *= lat_gain
