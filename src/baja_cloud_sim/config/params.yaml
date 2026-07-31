@@ -29,7 +29,7 @@ path_follower_node:
     kp_heading: 1.2
     max_steering_angle: 35.0
     use_speed_profile: true
-    desired_clearance: 2.5
+    desired_clearance: 3.5
     min_speed_obstacle: 2.0
     lqr_R: 2.0
     lqr_v_norm: 1.5

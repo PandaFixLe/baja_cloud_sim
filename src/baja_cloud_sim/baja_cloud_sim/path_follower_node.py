@@ -22,6 +22,7 @@ from .core import (
     PlannedTrajectory,
     SpeedProfileConfig,
     base_to_world,
+    clamp,
     compute_lqr_control,
     gps_to_local,
     legacy_path_control,
@@ -336,22 +337,40 @@ class PathFollowerNode(Node):
             self._publish_stop()
             return
 
-        # ── LQR control (Phase 2) ──
+        # ── Hybrid control: pure pursuit base + LQR residual ──
+        # Pure pursuit runs every cycle and provides the baseline steering.
+        # LQR only activates when triggered (cross-track error exceeds
+        # threshold) and adds a small feedback-only residual on top.
+        # Speed chain is unchanged.
+
+        # 1. Pure pursuit: base steering (always runs)
+        pp_command = legacy_path_control(
+            self.position, self.yaw_navigation, effective_path,
+            self.config, current_speed=self._current_speed,
+        )
+        base_steering = float(pp_command["steering"])
+
+        # 2. LQR residual: triggered feedback-only correction
+        residual_steering = 0.0
+        command = pp_command  # default: pure pursuit provides all keys
         if self._enable_lqr and len(self._path_curvatures) > 0:
             idx = _projected_index(effective_path, self._path_arc_lengths,
                                    self.position, self._last_proj_idx,
                                    self._s_proj_lookahead)
-            self._last_proj_idx = max(0, idx - 3)  # warm-start next cycle
-            reference = {
-                "x": effective_path[idx][0],
-                "y": effective_path[idx][1],
-                "yaw": self._path_yaws[idx] if idx < len(self._path_yaws) else self.yaw_world,
-                "kappa": self._path_curvatures[idx] if idx < len(self._path_curvatures) else 0.0,
-            }
-            command = compute_lqr_control(
+            ref_yaw = self._path_yaws[idx] if idx < len(self._path_yaws) else self.yaw_world
+            command["e_y"] = signed_lateral(self.position,
+                {"x": effective_path[idx][0], "y": effective_path[idx][1],
+                 "yaw": ref_yaw})
+            self._last_proj_idx = max(0, idx - 3)
+            # kappa=0 → LQR feedback only (pure pursuit already handles curvature)
+            ref_residual = {"x": effective_path[idx][0],
+                            "y": effective_path[idx][1],
+                            "yaw": ref_yaw,
+                            "kappa": 0.0}
+            lqr_cmd = compute_lqr_control(
                 self.position, self.yaw_world,
                 self._odom_velocity, self._yaw_rate,
-                reference,
+                ref_residual,
                 self._speed_profile if self._use_speed_profile else None,
                 idx,
                 self._current_speed,
@@ -361,15 +380,18 @@ class PathFollowerNode(Node):
                 lqr_e_y_int=self._lqr_e_y_int,
                 lqr_lateral_active=self._lqr_lateral_active,
             )
-            # Update persistent LQR state for next cycle
-            self._lqr_lateral_active = bool(command.get("lqr_lateral_active", False))
-            self._lqr_e_y_int += float(command.get("e_y", 0.0)) * 0.05
+            residual_steering = float(lqr_cmd["steering"])
+            self._lqr_lateral_active = bool(lqr_cmd.get("lqr_lateral_active", False))
+            self._lqr_e_y_int += float(lqr_cmd.get("e_y", 0.0)) * 0.05
             self._lqr_e_y_int = max(-0.5, min(0.5, self._lqr_e_y_int))
-        else:
-            command = legacy_path_control(
-                self.position, self.yaw_navigation, effective_path,
-                self.config, current_speed=self._current_speed,
-            )
+            # Use LQR's heading_error (e_psi) for the speed gate
+            command["heading_error"] = lqr_cmd.get("heading_error",
+                                                   command.get("heading_error", 0.0))
+
+        # 3. Combine
+        command["steering"] = clamp(base_steering + residual_steering,
+                                    -self._lqr_cfg.max_steering,
+                                    self._lqr_cfg.max_steering)
 
         # Phase 1.5: replace steering-based derating with curvature-aware speed profile
         target_speed = float(command["speed"])
