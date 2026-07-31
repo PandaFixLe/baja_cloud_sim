@@ -434,7 +434,9 @@ class PathFollowerNode(Node):
         # chassis is still settling from the correction.
         heading_err = float(command.get("heading_error", 0.0))
         cross_track = float(command.get("e_y", 0.0))
-        off_track = abs(cross_track) > 0.15
+        # Speed-adaptive threshold (same formula as LQR's _lateral_thresholds)
+        recov_th = 0.10 + 0.03 * self._current_speed
+        off_track = abs(cross_track) > recov_th
         misaligned = abs(heading_err) > math.radians(12.0)
         EXIT_DELAY = 15   # ~0.75 s @ 20 Hz
         if off_track and misaligned:
