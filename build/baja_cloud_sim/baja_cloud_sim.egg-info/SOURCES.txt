@@ -19,6 +19,13 @@ baja_cloud_sim/scenario_generator.py
 baja_cloud_sim/trajectory_smoother.py
 baja_cloud_sim/truth_perception_node.py
 baja_cloud_sim/video_recorder_node.py
+baja_cloud_sim.egg-info/PKG-INFO
+baja_cloud_sim.egg-info/SOURCES.txt
+baja_cloud_sim.egg-info/dependency_links.txt
+baja_cloud_sim.egg-info/entry_points.txt
+baja_cloud_sim.egg-info/requires.txt
+baja_cloud_sim.egg-info/top_level.txt
+baja_cloud_sim.egg-info/zip-safe
 baja_cloud_sim/core/__init__.py
 baja_cloud_sim/core/collision.py
 baja_cloud_sim/core/config.py
@@ -35,7 +42,4 @@ launch/simulation.launch.py
 models/baja_vehicle/model.config
 models/baja_vehicle/model.sdf
 resource/baja_cloud_sim
-test/test_core.py
-test/test_lqr_controller.py
-test/test_trajectory_smoother.py
 urdf/baja_vehicle.urdf
