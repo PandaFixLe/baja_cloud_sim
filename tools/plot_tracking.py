@@ -227,9 +227,11 @@ def main() -> None:
     data = _load_csv(csv_path)
     print(f"  {len(data['time_s'])} rows, {data['time_s'][-1]:.1f} s elapsed")
 
-    out_dir = csv_path.parent
-    _plot_path(data, cl_x, cl_y, out_dir / "tracking_path.png")
-    _plot_time_series(data, cl_curvatures, cl_arc, out_dir / "tracking_time.png")
+    out_dir = csv_path.parent / "photos"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tag = csv_path.stem.replace("tracking_", "")
+    _plot_path(data, cl_x, cl_y, out_dir / f"path_{tag}.png")
+    _plot_time_series(data, cl_curvatures, cl_arc, out_dir / f"time_{tag}.png")
 
     print("Done.")
 

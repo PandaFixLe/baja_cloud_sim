@@ -1,0 +1,59 @@
+低速转向控制链（v=1.5m/s 时完整链路）
+第1步：建 Frenet 状态
+
+# path_follower_node.py _control()
+nearest = _closest_index(effective_path, car_pos)
+reference = {
+    "yaw": self._path_yaws[nearest],    # 路径该点的方向
+    "kappa": self._path_curvatures[nearest]  # 路径该点的曲率
+}
+第2步：estimate_lqr_state() 算4态
+
+# core/controller.py
+dx = car_x - ref_x
+dy = car_y - ref_y
+e_y    = -sin(ref_yaw)×dx + cos(ref_yaw)×dy   # 横向偏差(左+右-)
+e_psi  = wrap(car_yaw - ref_yaw)               # 航向偏差
+vx, vy = odom速度(世界坐标系)
+e_y_dot = -sin(ref_yaw)×vx + cos(ref_yaw)×vy  # 横向速度
+e_psi_dot = yaw_rate - vx × kappa              # 偏航率误差
+
+state = [e_y, e_y_dot, e_psi, e_psi_dot]    # 4×1向量
+第3步：LQR 查 K
+
+# core/controller.py LQRController.get_gain()
+K = gain表.lookup(1.5)   # 插值查 K
+# K ≈ [0.70, 0.45, 1.98, 0.23] @ v=1.5m/s
+K 来自离线 DARE 求解——对 20 个速度点（0.5~10m/s，步长 0.5），用自行车模型 A/B 矩阵离散化后解 Riccati 方程。
+
+第4步：反馈计算
+
+delta_fb = -K @ state
+= -(K[0]×e_y + K[1]×e_y_dot + K[2]×e_psi + K[3]×e_psi_dot)
+
+典型值 @ v=1.5, CTE=0.1m:
+= -(0.70×0.1 + 0.45×0.05 + 1.98×0.01 + 0.23×0.02)
+= -(0.07 + 0.023 + 0.020 + 0.005)
+= -0.118 rad = -6.7°
+第5步：前馈（选择性）
+
+# 近时域12点: 连续6点以上同方向大曲率才开
+if κ持续且同号:
+    k_target = 加权平均κ
+    δ_ff = atan2(L × k_target, 1.0) + 不足转向项
+else:
+    δ_ff = 0    # 直道/减速带/颠簸 → 全关
+第6步：总转向
+
+steering_raw = clamp(δ_fb + δ_ff, -35°, +35°)
+第7步：速率限制
+
+delta = steering_raw - prev_steering
+max_step = 10°  (航向偏差>5°时→15°)
+clamped_delta = clamp(delta, -max_step, +max_step)
+steering_out = prev_steering + clamped_delta
+prev_steering = steering_out
+第8步：发布
+
+message.drive.steering_angle = steering_out
+→ actuator_adapter → angular.z = v×tan(δ)/L → Gazebo轮子
