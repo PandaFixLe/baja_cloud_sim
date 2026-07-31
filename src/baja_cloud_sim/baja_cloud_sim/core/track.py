@@ -1,14 +1,4 @@
-"""Track generation — rectangular loop built around the original L-track.
-
-Segment 1 (original L-track, 50 m east + 90 deg left + 50 m north):
-  Starts at origin heading east.  Contains the two hills (s=16-30 m,
-  s=~88-102 m) and two speed bumps (s=39 m, s=~105 m) from the original
-  terrain profile — **the terrain lives here**.
-
-Segments 2-4 (three more straights + three more corners):
-  Plain straights (same lengths as original) that close the rectangle
-  back to (0,0).  Flat, no obstacles.
-"""
+"""Track generation — centreline, boundaries, obstacles, B-spline smoothing."""
 
 from __future__ import annotations
 
@@ -20,110 +10,34 @@ from .geometry import Point, frenet_to_world
 from .terrain import terrain_height
 
 
-# ── Rectangular closed-loop centreline ──────────────────────────────────
-
-def generate_centerline(
-    _length: float = 100.0,       # ignored — kept for backward compat
-    spacing: float = 0.5,
-    straight1: float = 50.0,      # S1 (east)  & S3 (west)
-    straight2: float = 50.0,      # S2 (north) & S4 (south)  — original L-track
-    turn_radius: float = 15.0,
-) -> List[Dict[str, float]]:
-    """Closed rectangular loop using the original L-track as segment 1-2.
-
-    Layout:
-      S1 (east,  50 m) → T1 (left, 90°) → S2 (north, 50 m)
-    → T2 (left, 90°) → S3 (west,  50 m) → T3 (left, 90°)
-    → S4 (south, 50 m) → T4 (left, 90°) → back to (0,0) heading east.
-
-    Turn centres (left of each straight):
-      C1 = (straight1,  turn_radius)                    = (50, 15)
-      C2 = (straight1,  straight2 + turn_radius)        = (50, 65)
-      C3 = (0,          straight2 + turn_radius)        = ( 0, 65)
-      C4 = (0,          turn_radius)                    = ( 0, 15)
-    """
-    turn_arc = math.pi * 0.5 * turn_radius
-    total = 2.0 * (straight1 + straight2) + 4.0 * turn_arc
-
-    # Segment arc-length boundaries
-    s1_end  = straight1
-    t1_end  = s1_end + turn_arc
-    s2_end  = t1_end + straight2
-    t2_end  = s2_end + turn_arc
-    s3_end  = t2_end + straight1
-    t3_end  = s3_end + turn_arc
-    s4_end  = t3_end + straight2
-    # t4_end = s4_end + turn_arc  (= total)
-
-    # Turn centres
-    C = {
-        1: (straight1, turn_radius),                     # after S1
-        2: (straight1, straight2 + turn_radius),         # after S2
-        3: (0.0,       straight2 + turn_radius),         # after S3
-        4: (0.0,       turn_radius),                     # after S4
-    }
-
-    # Entry angles (from centre to car at turn entry)
-    entry_a = {
-        1: -math.pi * 0.5,   # car south of centre  → east→north
-        2:  0.0,             # car east  of centre  → north→west
-        3:  math.pi * 0.5,   # car north of centre  → west→south
-        4:  math.pi,         # car west  of centre  → south→east
-    }
-
-    count = int(round(total / spacing)) + 1
+def generate_centerline(length: float = 100.0, spacing: float = 0.5) -> List[Dict[str, float]]:
     points: List[Dict[str, float]] = []
-
+    count = int(round(length / spacing)) + 1
+    straight_length = min(50.0, length)
+    turn_radius = 15.0
+    turn_angle = math.pi * 0.5
+    turn_length = min(turn_radius * turn_angle, max(0.0, length - straight_length))
+    turn_end = straight_length + turn_length
     for index in range(count):
-        s = min(total, index * spacing)
-
-        if s <= s1_end:
-            x, y = s, 0.0
-            yaw = 0.0
-        elif s <= t1_end:
-            a = entry_a[1] + (s - s1_end) / turn_radius
-            x = C[1][0] + turn_radius * math.cos(a)
-            y = C[1][1] + turn_radius * math.sin(a)
-            yaw = a + math.pi * 0.5
-        elif s <= s2_end:
-            d = s - t1_end
-            x = C[1][0] + turn_radius
-            y = turn_radius + d
-            yaw = math.pi * 0.5
-        elif s <= t2_end:
-            a = entry_a[2] + (s - s2_end) / turn_radius
-            x = C[2][0] + turn_radius * math.cos(a)
-            y = C[2][1] + turn_radius * math.sin(a)
-            yaw = a + math.pi * 0.5
-        elif s <= s3_end:
-            d = s - t2_end
-            x = C[2][0] - d
-            y = C[2][1] + turn_radius
-            yaw = math.pi
-        elif s <= t3_end:
-            a = entry_a[3] + (s - s3_end) / turn_radius
-            x = C[3][0] + turn_radius * math.cos(a)
-            y = C[3][1] + turn_radius * math.sin(a)
-            yaw = a + math.pi * 0.5
-        elif s <= s4_end:
-            d = s - t3_end
-            x = C[3][0] - turn_radius
-            y = C[3][1] - d
-            yaw = math.pi * 1.5
+        s_coord = min(length, index * spacing)
+        if s_coord <= straight_length:
+            x, y, yaw = s_coord, 0.0, 0.0
+        elif s_coord <= turn_end:
+            angle = (s_coord - straight_length) / turn_radius
+            x = straight_length + turn_radius * math.sin(angle)
+            y = turn_radius * (1.0 - math.cos(angle))
+            yaw = angle
         else:
-            a = entry_a[4] + (s - s4_end) / turn_radius
-            x = C[4][0] + turn_radius * math.cos(a)
-            y = C[4][1] + turn_radius * math.sin(a)
-            yaw = a + math.pi * 0.5
-
-        half_width = 4.0
-        # Narrower road on original L-track segment (visual only)
-        if s <= s2_end:
-            half_width -= 0.25 * math.exp(-((s - 66.0) / 9.0) ** 2)
-
-        points.append({"s": s, "x": x, "y": y, "z": terrain_height(s),
+            final_angle = turn_length / turn_radius
+            turn_x = straight_length + turn_radius * math.sin(final_angle)
+            turn_y = turn_radius * (1.0 - math.cos(final_angle))
+            distance_after_turn = s_coord - turn_end
+            x = turn_x + distance_after_turn * math.cos(final_angle)
+            y = turn_y + distance_after_turn * math.sin(final_angle)
+            yaw = final_angle
+        half_width = 4.0 - 0.25 * math.exp(-((s_coord - 66.0) / 9.0) ** 2)
+        points.append({"s": s_coord, "x": x, "y": y, "z": terrain_height(s_coord),
                         "yaw": yaw, "half_width": half_width})
-
     return points
 
 
@@ -135,9 +49,7 @@ def generate_boundaries(centerline) -> Tuple[List[Point], List[Point]]:
     return left, right
 
 
-def generate_obstacles(centerline, seed: int, count: int = 0) -> List[Dict[str, float]]:
-    if count <= 0:
-        return []
+def generate_obstacles(centerline, seed: int, count: int = 5) -> List[Dict[str, float]]:
     rng = random.Random(seed)
     usable_indices = list(range(30, max(31, len(centerline) - 25)))
     chosen: List[int] = []
@@ -167,9 +79,10 @@ def generate_obstacles(centerline, seed: int, count: int = 0) -> List[Dict[str, 
     return obstacles
 
 
-# ── B-Spline smoothing ───────────────────────────────────────────────────
+# ── B-Spline smoothing (Phase 1) ──────────────────────────────────────
 
 def smooth_centerline_c2(raw_points, target_spacing=0.1, smoothing_factor=0.5):
+    """C² cubic-spline smoothing + arc-length resampling."""
     if len(raw_points) < 4:
         return [dict(p) for p in raw_points]
     try:

@@ -38,7 +38,6 @@ path_follower_node:
     max_lateral_accel: 1.8                # curvature ceiling (was 2.5 default)
     terrain_slope_threshold: 0.06
     terrain_min_speed: 1.0
-     
 
 actuator_adapter_node:
   ros__parameters:

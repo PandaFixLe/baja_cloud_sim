@@ -447,9 +447,9 @@ class PathFollowerNode(Node):
 
         # Simple cross-track speed cap — gentler than the old RECOVERY gate.
         cross_track = float(command.get("e_y", 0.0))
-        if abs(cross_track) > 0.40:
+        if abs(cross_track) > 0.20:
             target_speed = min(target_speed, 1.2)
-        elif abs(cross_track) > 0.25:
+        elif abs(cross_track) > 0.10:
             target_speed = min(target_speed, 1.8)
         # If way off-track, maintain at least 2 m/s for steering authority
         if abs(track_err) > 0.5:
