@@ -456,7 +456,7 @@ class PathFollowerNode(Node):
             target_speed = max(target_speed, 2.0)
 
         # Speed rate limiter
-        MAX_SPEED_STEP = 0.075  # +1.5 m/s² gentle acceleration
+        MAX_SPEED_STEP = 0.20   # +4.0 m/s² acceleration
         MAX_SPEED_DECEL = 0.25  # −5.0 m/s² deceleration (emergency stop)
         delta_spd = target_speed - self._prev_target_speed
         clamped_spd = max(-MAX_SPEED_DECEL, min(MAX_SPEED_STEP, delta_spd))
