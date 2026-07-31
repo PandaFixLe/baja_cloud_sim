@@ -152,8 +152,6 @@ class PathFollowerNode(Node):
 
         # LQI integral state (lateral-error accumulator)
         self._lqr_e_y_int: float = 0.0
-        # Triggered lateral LQR state
-        self._lqr_lateral_active: bool = False
 
         # curvature-aware pre-deceleration
         self.declare_parameter("max_lateral_accel", 1.8)
@@ -338,10 +336,9 @@ class PathFollowerNode(Node):
             return
 
         # ── Hybrid control: pure pursuit base + LQR residual ──
-        # Pure pursuit runs every cycle and provides the baseline steering.
-        # LQR only activates when triggered (cross-track error exceeds
-        # threshold) and adds a small feedback-only residual on top.
-        # Speed chain is unchanged.
+        # Pure pursuit provides the baseline steering via lookahead.
+        # LQR adds a continuous feedback-only residual, looking at the
+        # SAME lookahead target so the two controllers never fight.
 
         # 1. Pure pursuit: base steering (always runs)
         pp_command = legacy_path_control(
@@ -350,45 +347,42 @@ class PathFollowerNode(Node):
         )
         base_steering = float(pp_command["steering"])
 
-        # 2. LQR residual: triggered feedback-only correction
+        # 2. LQR residual: unified reference = PP lookahead target
         residual_steering = 0.0
-        command = pp_command  # default: pure pursuit provides all keys
+        command = pp_command  # default keys from pure pursuit
         if self._enable_lqr and len(self._path_curvatures) > 0:
-            idx = _projected_index(effective_path, self._path_arc_lengths,
-                                   self.position, self._last_proj_idx,
-                                   self._s_proj_lookahead)
-            ref_yaw = self._path_yaws[idx] if idx < len(self._path_yaws) else self.yaw_world
+            # Reference = pure pursuit's lookahead point (unified!)
+            target_x, target_y = pp_command["target_x"], pp_command["target_y"]
+            target_yaw = math.atan2(target_y - self.position[1],
+                                    target_x - self.position[0])
             command["e_y"] = signed_lateral(self.position,
-                {"x": effective_path[idx][0], "y": effective_path[idx][1],
-                 "yaw": ref_yaw})
-            self._last_proj_idx = max(0, idx - 3)
-            # kappa=0 → LQR feedback only (pure pursuit already handles curvature)
-            ref_residual = {"x": effective_path[idx][0],
-                            "y": effective_path[idx][1],
-                            "yaw": ref_yaw,
-                            "kappa": 0.0}
+                {"x": target_x, "y": target_y, "yaw": target_yaw})
+            ref_unified = {"x": target_x, "y": target_y,
+                           "yaw": target_yaw, "kappa": 0.0}
             lqr_cmd = compute_lqr_control(
                 self.position, self.yaw_world,
                 self._odom_velocity, self._yaw_rate,
-                ref_residual,
+                ref_unified,
                 self._speed_profile if self._use_speed_profile else None,
-                idx,
+                0,
                 self._current_speed,
                 self._lqr, self._lqr_cfg,
                 effective_path, self.config,
                 self.yaw_navigation,
                 lqr_e_y_int=self._lqr_e_y_int,
-                lqr_lateral_active=self._lqr_lateral_active,
             )
             residual_steering = float(lqr_cmd["steering"])
-            self._lqr_lateral_active = bool(lqr_cmd.get("lqr_lateral_active", False))
-            self._lqr_e_y_int += float(lqr_cmd.get("e_y", 0.0)) * 0.05
-            self._lqr_e_y_int = max(-0.5, min(0.5, self._lqr_e_y_int))
-            # Use LQR's heading_error (e_psi) for the speed gate
+            # Anti-windup: freeze integral when steering is saturated
+            saturated = abs(base_steering + residual_steering) >= self._lqr_cfg.max_steering * 0.98
+            if not saturated:
+                self._lqr_e_y_int += float(lqr_cmd.get("e_y", 0.0)) * 0.05
+                self._lqr_e_y_int = max(-0.5, min(0.5, self._lqr_e_y_int))
             command["heading_error"] = lqr_cmd.get("heading_error",
                                                    command.get("heading_error", 0.0))
 
-        # 3. Combine
+        # 3. Combine: residual limited to ±10° before adding to base
+        MAX_RESIDUAL = math.radians(10.0)
+        residual_steering = clamp(residual_steering, -MAX_RESIDUAL, MAX_RESIDUAL)
         command["steering"] = clamp(base_steering + residual_steering,
                                     -self._lqr_cfg.max_steering,
                                     self._lqr_cfg.max_steering)
@@ -407,19 +401,16 @@ class PathFollowerNode(Node):
         elif self._ctrl_state == _ControlState.SLOWDOWN:
             target_speed = min(target_speed, 1.0)
 
-        # Heading-recovery speed gate: only active when the vehicle is
-        # actually off-track.  On a curve the reference yaw naturally
-        # differs from the vehicle yaw — that is normal tracking, not
-        # a recovery situation.
+        # Unified RECOVERY mode: single gate that coordinates speed
+        # and steering.  When the vehicle is genuinely off-track AND
+        # misaligned, reduce speed and let LQR work at full gain.
+        # Otherwise keep normal cruise.
         heading_err = float(command.get("heading_error", 0.0))
         cross_track = float(command.get("e_y", 0.0))
-        off_track = abs(cross_track) > 0.20
-        if off_track and abs(heading_err) > math.radians(25.0):
-            target_speed = min(target_speed, 0.5)
-        elif off_track and abs(heading_err) > math.radians(12.0):
-            target_speed = min(target_speed, 1.0)
-        elif off_track and abs(heading_err) > math.radians(5.0):
-            target_speed = min(target_speed, 1.5)
+        off_track = abs(cross_track) > 0.15   # tighter than old 0.20
+        misaligned = abs(heading_err) > math.radians(12.0)
+        if off_track and misaligned:
+            target_speed = min(target_speed, 1.0)  # unified recovery speed
 
         # Speed rate limiter
         MAX_SPEED_STEP = 0.075  # +1.5 m/s² gentle acceleration

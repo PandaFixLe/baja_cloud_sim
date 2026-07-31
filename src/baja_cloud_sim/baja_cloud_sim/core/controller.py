@@ -185,7 +185,6 @@ def compute_lqr_control(
     reference, speed_profile, s_index, actual_velocity,
     lqr_controller, lqr_cfg, path, ctrl_cfg, yaw_navigation,
     lqr_e_y_int: float = 0.0,
-    lqr_lateral_active: bool = False,
 ) -> Dict[str, float]:
     v_op = actual_velocity
     if speed_profile and 0 <= s_index < len(speed_profile):
@@ -208,37 +207,30 @@ def compute_lqr_control(
             e_psi = state[i_epsi]
             e_psi_dot = state[i_epsidot]
 
-            # ── Triggered lateral LQR ──
-            # Instead of correcting every tiny lateral error (which
-            # causes constant micro-steering), only engage lateral
-            # correction when cross-track error exceeds a speed‑
-            # adaptive threshold.  Yaw correction stays active at
-            # reduced gain in "glide" mode so the vehicle naturally
-            # converges to the path.
+            # ── Continuous lateral gain (smoothstep) ──
+            # Instead of a hard on/off trigger, the lateral gain ramps
+            # linearly from 0 at th_exit to 1 at th_enter.  Yaw gain
+            # ramps from 25 % to 100 % over the same band.  This
+            # eliminates the discontinuity that caused steering jolts
+            # at the threshold boundary.
             th_enter, th_exit = _lateral_thresholds(v_op)
             cross_track = abs(e_y)
-            self_correcting = e_y * e_y_dot < 0
 
-            if not lqr_lateral_active:
-                if cross_track > th_enter:
-                    lqr_lateral_active = True
+            if cross_track < th_exit:
+                lat_gain = 0.0
+            elif cross_track > th_enter:
+                lat_gain = 1.0
             else:
-                if cross_track < th_exit:
-                    lqr_lateral_active = False
-                elif self_correcting and cross_track < th_enter * 1.3:
-                    lqr_lateral_active = False  # early exit
+                lat_gain = (cross_track - th_exit) / (th_enter - th_exit)
 
-            # Gain scaling: lateral gains are 0 in glide, 1 in correction.
-            # Yaw gains are always active (0.3× in glide, 1× in correction).
-            lat_gain = 1.0 if lqr_lateral_active else 0.0
-            yaw_gain = 1.0 if lqr_lateral_active else 0.25
+            yaw_gain = 0.25 + 0.75 * lat_gain
 
             K_scaled = K.copy()
             K_scaled[0, i_ey] *= lat_gain
             K_scaled[0, i_eydot] *= lat_gain
             K_scaled[0, i_epsi] *= yaw_gain
             K_scaled[0, i_epsidot] *= yaw_gain
-            # integral gain: keep active proportional to lateral gain
+            # integral: freeze (gain→0) in deep glide, active otherwise
             if use_int:
                 K_scaled[0, 0] *= lat_gain
 
@@ -247,8 +239,7 @@ def compute_lqr_control(
             steering = clamp(delta_fb + delta_ff, -lqr_cfg.max_steering, lqr_cfg.max_steering)
             return {"speed": float(v_op), "steering": steering,
                     "target_x": reference["x"], "target_y": reference["y"],
-                    "heading_error": e_psi, "e_y": float(e_y),
-                    "lqr_lateral_active": lqr_lateral_active}
+                    "heading_error": e_psi, "e_y": float(e_y)}
     return legacy_path_control((position[0], position[1]), yaw_navigation, path, ctrl_cfg)
 
 
