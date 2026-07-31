@@ -223,7 +223,7 @@ def compute_lqr_control(
             else:
                 lat_gain = (cross_track - th_exit) / (th_enter - th_exit)
 
-            yaw_gain = 0.25 + 0.75 * lat_gain
+            yaw_gain = 0.3 + 0.7 * lat_gain
 
             K_scaled = K.copy()
             K_scaled[0, i_ey] *= lat_gain
