@@ -152,6 +152,7 @@ class PathFollowerNode(Node):
 
         # LQI integral state (lateral-error accumulator)
         self._lqr_e_y_int: float = 0.0
+        self._recovery_hold: int = 0  # countdown timer for RECOVERY exit delay
 
         # curvature-aware pre-deceleration
         self.declare_parameter("max_lateral_accel", 1.8)
@@ -427,16 +428,21 @@ class PathFollowerNode(Node):
         elif self._ctrl_state == _ControlState.SLOWDOWN:
             target_speed = min(target_speed, 1.0)
 
-        # Unified RECOVERY mode: single gate that coordinates speed
-        # and steering.  When the vehicle is genuinely off-track AND
-        # misaligned, reduce speed and let LQR work at full gain.
-        # Otherwise keep normal cruise.
+        # Unified RECOVERY mode with exit delay.
+        # When the vehicle enters recovery, speed is capped for a
+        # minimum hold period so it doesn't re-accelerate while the
+        # chassis is still settling from the correction.
         heading_err = float(command.get("heading_error", 0.0))
         cross_track = float(command.get("e_y", 0.0))
-        off_track = abs(cross_track) > 0.15   # tighter than old 0.20
+        off_track = abs(cross_track) > 0.15
         misaligned = abs(heading_err) > math.radians(12.0)
+        EXIT_DELAY = 15   # ~0.75 s @ 20 Hz
         if off_track and misaligned:
-            target_speed = min(target_speed, 1.0)  # unified recovery speed
+            self._recovery_hold = EXIT_DELAY
+            target_speed = min(target_speed, 1.0)
+        elif self._recovery_hold > 0:
+            self._recovery_hold -= 1
+            target_speed = min(target_speed, 1.0)
 
         # Speed rate limiter
         MAX_SPEED_STEP = 0.075  # +1.5 m/s² gentle acceleration
