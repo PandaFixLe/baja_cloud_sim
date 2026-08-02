@@ -1,0 +1,82 @@
+[0.305s] Invoking command in '/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim': PYTHONPATH=/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages: /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build
+[0.425s] running develop
+[0.475s] Removing /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja-cloud-sim.egg-link (link to .)
+[0.488s] Invoked command in '/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim' returned '0': PYTHONPATH=/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages: /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build
+[0.489s] Invoking command in '/home/pandafixle/Desktop/baja_cloud_sim/src/baja_cloud_sim': PYTHONPATH=/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages: /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/baja_cloud_sim build --build-base /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build install --record /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/install.log --install-scripts $base/lib/baja_cloud_sim --single-version-externally-managed install_data --force
+[0.609s] running egg_info
+[0.609s] writing ../../build/baja_cloud_sim/baja_cloud_sim.egg-info/PKG-INFO
+[0.610s] writing dependency_links to ../../build/baja_cloud_sim/baja_cloud_sim.egg-info/dependency_links.txt
+[0.610s] writing entry points to ../../build/baja_cloud_sim/baja_cloud_sim.egg-info/entry_points.txt
+[0.610s] writing requirements to ../../build/baja_cloud_sim/baja_cloud_sim.egg-info/requires.txt
+[0.610s] writing top-level names to ../../build/baja_cloud_sim/baja_cloud_sim.egg-info/top_level.txt
+[0.611s] reading manifest file '../../build/baja_cloud_sim/baja_cloud_sim.egg-info/SOURCES.txt'
+[0.612s] writing manifest file '../../build/baja_cloud_sim/baja_cloud_sim.egg-info/SOURCES.txt'
+[0.612s] running build
+[0.613s] running build_py
+[0.613s] copying baja_cloud_sim/path_follower_node.py -> /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim
+[0.614s] running install
+[0.614s] running install_lib
+[0.615s] creating /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.615s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/truth_perception_node.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.615s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/frenet_planner_node.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.615s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/lqr_controller.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.615s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/path_follower_node.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/trajectory_smoother.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/evaluator_node.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/scenario_generator.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/__init__.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/video_recorder_node.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.616s] creating /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core/track.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core/controller.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core/speed_profile.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core/geometry.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.616s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core/planner.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.617s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core/__init__.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.617s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core/terrain.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.617s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core/collision.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.617s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core/config.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core
+[0.617s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/actuator_adapter_node.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.617s] copying /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build/lib/baja_cloud_sim/core.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim
+[0.617s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/truth_perception_node.py to truth_perception_node.cpython-310.pyc
+[0.618s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/frenet_planner_node.py to frenet_planner_node.cpython-310.pyc
+[0.619s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/lqr_controller.py to lqr_controller.cpython-310.pyc
+[0.620s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/path_follower_node.py to path_follower_node.cpython-310.pyc
+[0.623s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/trajectory_smoother.py to trajectory_smoother.cpython-310.pyc
+[0.624s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/evaluator_node.py to evaluator_node.cpython-310.pyc
+[0.625s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/scenario_generator.py to scenario_generator.cpython-310.pyc
+[0.626s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/__init__.py to __init__.cpython-310.pyc
+[0.626s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/video_recorder_node.py to video_recorder_node.cpython-310.pyc
+[0.627s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core/track.py to track.cpython-310.pyc
+[0.628s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core/controller.py to controller.cpython-310.pyc
+[0.629s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core/speed_profile.py to speed_profile.cpython-310.pyc
+[0.630s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core/geometry.py to geometry.cpython-310.pyc
+[0.631s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core/planner.py to planner.cpython-310.pyc
+[0.631s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core/__init__.py to __init__.cpython-310.pyc
+[0.632s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core/terrain.py to terrain.cpython-310.pyc
+[0.632s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core/collision.py to collision.cpython-310.pyc
+[0.633s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core/config.py to config.cpython-310.pyc
+[0.633s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/actuator_adapter_node.py to actuator_adapter_node.cpython-310.pyc
+[0.634s] byte-compiling /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim/core.py to core.cpython-310.pyc
+[0.638s] running install_data
+[0.638s] copying resource/baja_cloud_sim -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/ament_index/resource_index/packages
+[0.638s] copying package.xml -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim
+[0.639s] copying launch/simulation.launch.py -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/launch
+[0.639s] copying config/params.yaml -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+[0.639s] copying config/simulation.rviz -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+[0.639s] copying config/bridge.yaml -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/config
+[0.639s] copying models/baja_vehicle/model.config -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle
+[0.639s] copying models/baja_vehicle/model.sdf -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/models/baja_vehicle
+[0.639s] copying urdf/baja_vehicle.urdf -> /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/share/baja_cloud_sim/urdf
+[0.639s] running install_egg_info
+[0.640s] Copying ../../build/baja_cloud_sim/baja_cloud_sim.egg-info to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages/baja_cloud_sim-1.1.0-py3.10.egg-info
+[0.641s] running install_scripts
+[0.654s] Installing actuator_adapter script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.654s] Installing evaluator script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.655s] Installing frenet_planner script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.655s] Installing generate_scenario script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.655s] Installing path_follower script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.655s] Installing truth_perception script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.655s] Installing video_recorder script to /home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/baja_cloud_sim
+[0.655s] writing list of installed files to '/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/install.log'
+[0.668s] Invoked command in '/home/pandafixle/Desktop/baja_cloud_sim/src/baja_cloud_sim' returned '0': PYTHONPATH=/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/pandafixle/Desktop/baja_cloud_sim/install/baja_cloud_sim/lib/python3.10/site-packages: /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/baja_cloud_sim build --build-base /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/build install --record /home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/install.log --install-scripts $base/lib/baja_cloud_sim --single-version-externally-managed install_data --force
