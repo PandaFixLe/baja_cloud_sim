@@ -27,8 +27,12 @@ sys.path.insert(0, str(PACKAGE))
 
 from baja_cloud_sim.core import (  # noqa: E402
     ControllerConfig,
+    LQRConfig,
+    LQRController,
     PlannerConfig,
     clamp,
+    compute_feedforward,
+    estimate_lqr_state,
     generate_boundaries,
     generate_centerline,
     generate_obstacles,
@@ -69,6 +73,16 @@ def _speed_factor_continuous(steering: float, max_steering: float) -> float:
     return 0.5 + 0.5 * math.cos(ratio * math.pi * 0.5)
 
 
+def _closest_index_tuples(path: List[Point], position: Point) -> int:
+    """Nearest index in a list of (x, y) tuples to a given position."""
+    best, best_d2 = 0, float("inf")
+    for i, (px, py) in enumerate(path):
+        d2 = (px - position[0]) ** 2 + (py - position[1]) ** 2
+        if d2 < best_d2:
+            best, best_d2 = i, d2
+    return best
+
+
 # ── main loop ─────────────────────────────────────────────────────────
 def run(
     seed: int = 42,
@@ -103,6 +117,13 @@ def run(
     feasible = False
     infeasible_count = 0
     dt = 0.05  # 20 Hz
+    prev_steering = 0.0
+    e_y_int = 0.0
+    lqr_ctrl = None
+    lqr_cfg = None
+    if controller == "lqr_apollo":
+        lqr_ctrl = LQRController()
+        lqr_cfg = LQRConfig()
 
     # logging
     log: List[Dict[str, float]] = []
@@ -135,6 +156,46 @@ def run(
                 effective_path = []
         if not effective_path or len(effective_path) < 2:
             command = {"speed": 0.0, "steering": 0.0, "target_x": x, "target_y": y}
+        elif controller == "lqr_apollo" and lqr_ctrl is not None:
+            # Reference = planner path (mirrors the node using /planned_path).
+            # NOTE: this index addresses `effective_path`, NOT `centerline`.
+            # Keep it in its own variable — `nearest` is the centerline index
+            # used by the planner seed and the metrics below.
+            p_idx = _closest_index_tuples(effective_path, (x, y))
+            # Clamp to an *interior* node so p0/p1/p2 are three distinct
+            # points.  At p_idx == 0 the old code aliased p0 == p1, making
+            # atan2(0, 0) == 0 and inflating kappa by more than an order of
+            # magnitude — the feed-forward term then demanded absurd steering.
+            p_idx = min(max(p_idx, 1), max(1, len(effective_path) - 2))
+            p0 = effective_path[p_idx - 1]
+            p1 = effective_path[p_idx]
+            p2 = effective_path[p_idx + 1]
+            yaw_prev = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
+            yaw_next = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+            # Node-centred curvature, normalised by the mean adjacent
+            # segment length (matches path_follower_node._compute_speed_profile)
+            ds = 0.5 * (math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+                        + math.hypot(p2[0] - p1[0], p2[1] - p1[1]))
+            kappa = wrap_angle(yaw_next - yaw_prev) / ds if ds > 1e-6 else 0.0
+            # Node yaw = bisector of the two adjacent segments
+            ref_yaw = wrap_angle(yaw_prev + 0.5 * wrap_angle(yaw_next - yaw_prev))
+            ref = {"x": p1[0], "y": p1[1], "yaw": ref_yaw, "kappa": kappa}
+            yaw_rate = speed * math.tan(prev_steering) / 1.43 if abs(speed) > 0.01 else 0.0
+            odom_vel = (speed * math.cos(yaw), speed * math.sin(yaw))
+            state = estimate_lqr_state((x, y), yaw, odom_vel, yaw_rate, ref, e_y_int)
+            K = lqr_ctrl.get_gain(max(speed, 0.5), lqr_cfg)
+            if K is not None:
+                delta_fb = -float(K @ state)
+                delta_ff = compute_feedforward(kappa, max(speed, 0.5), lqr_cfg)
+                steering = clamp(delta_ff + delta_fb, -max_steering, max_steering)
+                e_y_int = clamp(e_y_int + float(state[1]) * dt, -0.5, 0.5)
+            else:
+                steering = 0.0
+            v_ref = target_speed
+            if use_speed_profile:
+                v_ref = min(target_speed, math.sqrt(1.8 / max(abs(kappa), 1e-4)))
+            command = {"speed": v_ref, "steering": steering,
+                       "target_x": p2[0], "target_y": p2[1]}
         else:
             command = legacy_path_control((x, y), navigation_yaw, effective_path, ctrl_cfg)
             # continuous derating (Phase 0.7)
@@ -147,6 +208,7 @@ def run(
             command["speed"], speed, 2.0, -2.5, dt, prev_accel=prev_accel, max_jerk=4.0,
         )
         speed = smoothed
+        prev_steering = command["steering"]
 
         # ── dynamics (bicycle model) ──
         yaw = wrap_angle(yaw + speed * math.tan(command["steering"]) / 1.43 * dt)
@@ -185,19 +247,42 @@ def run(
     progress = ref["s"]
     passed = progress >= 97.0 and collision_count == 0 and center_error < 1.0
 
+    # Steering smoothness: a controller can track well on paper while
+    # slamming the rack lock-to-lock.  Saturation percentage and the
+    # step-to-step rate are the metrics that correlate with the limit
+    # cycle seen in Gazebo, so surface them next to the tracking error.
+    steer_series = [r["steering_deg"] for r in log] or [0.0]
+    sat_limit = math.degrees(max_steering) * 0.98
+    steer_sat_pct = 100.0 * sum(1 for s in steer_series if abs(s) >= sat_limit) / len(steer_series)
+    steer_mean = sum(steer_series) / len(steer_series)
+    steer_std = math.sqrt(sum((s - steer_mean) ** 2 for s in steer_series) / len(steer_series))
+    steer_rate = (
+        sum(abs(steer_series[i] - steer_series[i - 1]) for i in range(1, len(steer_series)))
+        / (max(1, len(steer_series) - 1) * dt)
+    )
+    err_series = [r["center_error"] for r in log] or [0.0]
+    center_error_mean = sum(err_series) / len(err_series)
+
     summary = {
         "seed": seed,
         "progress_m": progress,
         "collisions": collision_count,
         "center_error_m": center_error,
+        "center_error_mean_m": center_error_mean,
         "final_speed": speed,
+        "steer_std_deg": steer_std,
+        "steer_sat_pct": steer_sat_pct,
+        "steer_rate_dps": steer_rate,
         "steps": len(log),
         "passed": passed,
     }
     print(
         f"seed={seed}  progress={progress:.1f}/100 m  "
-        f"collisions={collision_count}  center_error={center_error:.2f} m  "
-        f"final_speed={speed:.2f} m/s  {'PASS' if passed else 'FAIL'}"
+        f"collisions={collision_count}  center_error={center_error:.2f} m "
+        f"(mean {center_error_mean:.2f})  "
+        f"final_speed={speed:.2f} m/s  "
+        f"steer[std={steer_std:.1f}° sat={steer_sat_pct:.0f}% rate={steer_rate:.0f}°/s]  "
+        f"{'PASS' if passed else 'FAIL'}"
     )
 
     # ── plots ──
@@ -269,7 +354,7 @@ if __name__ == "__main__":
     parser.add_argument("--obstacles", type=int, default=5)
     parser.add_argument("--scenario", type=str, default=None,
                         help="Path to scenario JSON (default: procedural centreline)")
-    parser.add_argument("--controller", choices=["pure_pursuit", "lqr"],
+    parser.add_argument("--controller", choices=["pure_pursuit", "lqr_apollo"],
                         default="pure_pursuit")
     parser.add_argument("--speed", type=float, default=2.5,
                         help="Target speed [m/s]")
