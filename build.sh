@@ -10,5 +10,5 @@ cd "$SCRIPT_DIR"
 # keys because install_ubuntu2204.sh already installed their Harmonic variants.
 rosdep install --from-paths src --ignore-src -r -y --rosdistro humble \
   --skip-keys "ros_gz_sim ros_gz_bridge"
-colcon build --symlink-install --event-handlers console_direct+
+colcon build --event-handlers console_direct+
 echo "Built workspace at $SCRIPT_DIR/install"

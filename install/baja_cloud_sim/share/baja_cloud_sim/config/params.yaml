@@ -1,1 +1,61 @@
-/home/pandafixle/Desktop/baja_cloud_sim/build/baja_cloud_sim/config/params.yaml
+truth_perception_node:
+  ros__parameters:
+    use_sim_time: true
+    perception_forward: 34.0
+    perception_backward: 6.0
+    localization_position_stddev_m: 0.015
+    localization_altitude_stddev_m: 0.020
+    localization_yaw_stddev_deg: 0.12
+
+frenet_planner_node:
+  ros__parameters:
+    use_sim_time: true
+    origin_latitude: 30.0
+    origin_longitude: 114.0
+    horizon_m: 30.0
+    center_weight: 1.0
+    clearance_weight: 12.0
+    desired_clearance: 1.2
+    vehicle_length: 3.0
+    vehicle_width: 1.5
+
+path_follower_node:
+  ros__parameters:
+    use_sim_time: true
+    origin_latitude: 30.0
+    origin_longitude: 114.0
+    target_speed: 2.5
+    lookahead_distance: 3.0
+    kp_heading: 1.0
+    max_steering_angle: 35.0
+    use_speed_profile: true
+    desired_clearance: 3.5
+    min_speed_obstacle: 2.0
+    lqr_R: 3.0
+    lqr_v_norm: 1.5
+    lqr_Q: [0.05, 8.0, 2.0, 4.0, 0.5] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] (retuned for line-holding)
+    s_proj_lookahead: 0.8
+    max_lateral_accel: 1.8                # curvature ceiling (was 2.5 default)
+    terrain_slope_threshold: 0.06
+    terrain_min_speed: 1.0
+    enable_lqr: true
+    # ── Longitudinal cascaded-PID (Apollo-style) ──
+    lon_kp: 2.0
+    lon_ki: 0.5
+    lon_kd: 0.2
+    lon_i_limit: 2.0
+    idle_speed: 1.0
+    slope_comp_gain: 1.0
+    speed_profile_max: 3.5
+    lon_accel_step: 0.20   # m/s per 50 ms ≈ 4.0 m/s²
+    lon_decel_step: 0.25   # ≈ 5.0 m/s²
+
+actuator_adapter_node:
+  ros__parameters:
+    use_sim_time: true
+    wheelbase: 1.43
+    command_timeout: 0.35
+
+evaluator_node:
+  ros__parameters:
+    use_sim_time: true
