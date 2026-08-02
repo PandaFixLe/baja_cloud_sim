@@ -1,6 +1,2 @@
-install/
-log/
-runtime/
-results/
 __pycache__/
 *.pyc
