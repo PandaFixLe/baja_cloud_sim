@@ -59,17 +59,25 @@ def estimate_lqr_state(
 ) -> np.ndarray:
     """Augmented 5‑state vector: [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot].
 
+    ``odom_velocity`` must be the **world-frame** velocity ``(vx, vy)``;
+    it is projected onto the reference normal (→ ``e_y_dot``) and onto the
+    reference tangent (→ path-following speed used for the reference yaw
+    rate ``v_s·κ``).
+
     The integral term ``e_y_int`` is accumulated externally (one sample per
     control cycle) so the LQR gain includes integral action that eliminates
     steady‑state lateral offset.
     """
     dx = position[0] - reference["x"]
     dy = position[1] - reference["y"]
-    e_y = -math.sin(reference["yaw"]) * dx + math.cos(reference["yaw"]) * dy
+    ref_cos = math.cos(reference["yaw"])
+    ref_sin = math.sin(reference["yaw"])
+    e_y = -ref_sin * dx + ref_cos * dy
     e_psi = wrap_angle(yaw - reference["yaw"])
     vx, vy = odom_velocity
-    e_y_dot = -math.sin(reference["yaw"]) * vx + math.cos(reference["yaw"]) * vy
-    e_psi_dot = yaw_rate - vx * reference.get("kappa", 0.0)
+    e_y_dot = -ref_sin * vx + ref_cos * vy
+    v_s = ref_cos * vx + ref_sin * vy  # speed along the reference tangent
+    e_psi_dot = yaw_rate - v_s * reference.get("kappa", 0.0)
     return np.array([e_y_int, e_y, e_y_dot, e_psi, e_psi_dot], dtype=np.float64)
 
 
@@ -86,12 +94,17 @@ def build_lqr_matrices(velocity: float, cfg: LQRConfig) -> Tuple[np.ndarray, np.
     lf, lr = cfg.lf, cfg.lr
     a22 = -(Cf + Cr) / (m * v)
     a23 = (Cf + Cr) / m
-    a24 = (lf * Cf - lr * Cr) / (m * v)
+    a24 = -(lf * Cf - lr * Cr) / (m * v)
     a42 = -(lf * Cf - lr * Cr) / (Iz * v)
     a43 = (lf * Cf - lr * Cr) / Iz
     a44 = -(lf * lf * Cf + lr * lr * Cr) / (Iz * v)
-    b21 = Cf / (m * v) if v > 0.5 else Cf / (m * 0.5)
-    b41 = (lf * Cf) / (Iz * v) if v > 0.5 else (lf * Cf) / (Iz * 0.5)
+    # Control matrix (Rajamani, *Vehicle Dynamics and Control*, eq. 3.31):
+    # steering enters the lateral/yaw accelerations through the front
+    # cornering stiffness with **no** 1/v factor.  A spurious 1/v makes the
+    # modelled control authority collapse as speed rises, so the DARE
+    # compensates with gains that badly over-steer the real plant.
+    b21 = Cf / m
+    b41 = (lf * Cf) / Iz
 
     use_integral = len(cfg.Q) == 5
     if use_integral:
@@ -243,6 +256,46 @@ def compute_lqr_control(
                     "target_x": reference["x"], "target_y": reference["y"],
                     "heading_error": e_psi, "e_y": float(e_y)}
     return legacy_path_control((position[0], position[1]), yaw_navigation, path, ctrl_cfg)
+
+
+def compute_lqr_steering(
+    position, yaw, odom_velocity, yaw_rate,
+    reference, actual_velocity,
+    lqr_controller, lqr_cfg,
+    e_y_int: float = 0.0,
+) -> Optional[Dict[str, float]]:
+    """Apollo-style *primary* lateral controller: ``δ = δ_ff + δ_fb``.
+
+    Unlike :func:`compute_lqr_control` (which only supplies a small,
+    capped residual on top of pure pursuit), this is the main steering
+    law:
+
+    * feed-forward ``δ_ff`` (curvature compensation) is **always** applied;
+    * LQR provides the **full** feedback gain (no residual clamp, no
+      smoothstep gain band) — the node applies the final actuator limit;
+    * the 5-state augmented form (``Q`` has 5 elements) adds integral
+      action that removes steady-state lateral offset.
+
+    ``reference`` must carry ``x, y, yaw, kappa``.  Returns ``None`` when
+    the gain is unavailable so the caller can fall back to pure pursuit.
+    """
+    if reference.get("kappa") is None:
+        return None
+    v_op = max(actual_velocity, lqr_cfg.lqr_min_velocity)
+    K = lqr_controller.get_gain(v_op, lqr_cfg)
+    if K is None:
+        return None
+    use_int = len(lqr_cfg.Q) == 5
+    state = estimate_lqr_state(position, yaw, odom_velocity, yaw_rate,
+                               reference, e_y_int=e_y_int)
+    if not use_int:
+        state = state[1:]
+    delta_ff = compute_feedforward(reference.get("kappa", 0.0), v_op, lqr_cfg)
+    delta_fb = -float(K @ state)
+    delta = delta_ff + delta_fb
+    e_y = float(state[1]) if use_int else float(state[0])
+    e_psi = float(state[3]) if use_int else float(state[2])
+    return {"steering": delta, "e_y": e_y, "heading_error": e_psi}
 
 
 # ── Utility ───────────────────────────────────────────────────────────

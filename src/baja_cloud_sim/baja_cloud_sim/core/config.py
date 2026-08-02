@@ -56,8 +56,11 @@ class LQRConfig:
     lf: float = 0.715
     lr: float = 0.715
     max_steering: float = 0.6109
-    Q: Tuple[float, ...] = (0.05, 5.0, 1.0, 3.0, 0.5)  # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] — 5‑element ⇒ LQI
-    R: float = 4.0
+    # Keep in sync with config/params.yaml (lqr_Q / lqr_R / lqr_v_norm).
+    # The offline harness uses these defaults, so any drift means the offline
+    # gate is not testing the tuning that actually runs in the simulator.
+    Q: Tuple[float, ...] = (0.05, 8.0, 2.0, 4.0, 0.5)  # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] — 5‑element ⇒ LQI
+    R: float = 3.0
     v_norm: float = 1.5
     understeer_gradient: float = 0.0
     dt: float = 0.05  # must match the control-loop timer period (path_follower_node._control)

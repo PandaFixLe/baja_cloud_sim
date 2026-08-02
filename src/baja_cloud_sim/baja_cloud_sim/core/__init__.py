@@ -18,6 +18,7 @@ from .controller import (  # noqa: F401
     build_lqr_matrices,
     compute_feedforward,
     compute_lqr_control,
+    compute_lqr_steering,
     estimate_lqr_state,
     legacy_path_control,
     smooth_velocity,

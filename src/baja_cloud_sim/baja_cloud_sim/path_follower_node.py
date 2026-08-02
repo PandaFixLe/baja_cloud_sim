@@ -23,7 +23,7 @@ from .core import (
     SpeedProfileConfig,
     base_to_world,
     clamp,
-    compute_lqr_control,
+    compute_lqr_steering,
     gps_to_local,
     legacy_path_control,
     nav_to_world_yaw,
@@ -160,6 +160,30 @@ class PathFollowerNode(Node):
             self.get_parameter("max_lateral_accel").value)
 
         self._diag_tick = 0  # speed-profile diagnostic counter
+
+        # ── Longitudinal cascaded-PID params (Apollo-style) ──
+        self.declare_parameter("lon_kp", 2.0)
+        self.declare_parameter("lon_ki", 0.5)
+        self.declare_parameter("lon_kd", 0.2)
+        self.declare_parameter("lon_i_limit", 2.0)
+        self.declare_parameter("idle_speed", 1.0)
+        self.declare_parameter("slope_comp_gain", 1.0)
+        self.declare_parameter("speed_profile_max", 3.5)
+        self.declare_parameter("lon_accel_step", 0.20)   # m/s per 50 ms ≈ 4.0 m/s²
+        self.declare_parameter("lon_decel_step", 0.25)   # ≈ 5.0 m/s²
+        self._lon_kp = float(self.get_parameter("lon_kp").value)
+        self._lon_ki = float(self.get_parameter("lon_ki").value)
+        self._lon_kd = float(self.get_parameter("lon_kd").value)
+        self._lon_i_limit = float(self.get_parameter("lon_i_limit").value)
+        self._idle_speed = float(self.get_parameter("idle_speed").value)
+        self._slope_comp_gain = float(self.get_parameter("slope_comp_gain").value)
+        self._lon_accel_step = float(self.get_parameter("lon_accel_step").value)
+        self._lon_decel_step = float(self.get_parameter("lon_decel_step").value)
+        self._dt = 0.05
+        self._lon_i = 0.0
+        self._lon_e_prev = 0.0
+        # Lift speed-profile ceiling to a tracking-comfortable value
+        self._speed_cfg.max_speed = float(self.get_parameter("speed_profile_max").value)
         self.command_pub = self.create_publisher(AckermannDriveStamped, "/cmd_control", 10)
         self.lookahead_pub = self.create_publisher(PointStamped, "/lookahead_point", 10)
         self.create_subscription(NavSatFix, "/gps/fix", self._gps_callback, 20)
@@ -188,15 +212,21 @@ class PathFollowerNode(Node):
         self.yaw_world = nav_to_world_yaw(self.yaw_navigation)
 
     def _odom_callback(self, message: Odometry) -> None:
+        # Gazebo's OdometryPublisher reports twist in the *body* frame
+        # (robot_base_frame), while estimate_lqr_state() projects the
+        # velocity onto the reference normal in the *world* frame.
+        # Rotate here using the odometry orientation.
+        vx_b = message.twist.twist.linear.x
+        vy_b = message.twist.twist.linear.y
+        q = message.pose.pose.orientation
+        yaw = quaternion_to_yaw(q.x, q.y, q.z, q.w)
+        cos_y, sin_y = math.cos(yaw), math.sin(yaw)
         self._odom_velocity = (
-            message.twist.twist.linear.x,
-            message.twist.twist.linear.y,
+            vx_b * cos_y - vy_b * sin_y,
+            vx_b * sin_y + vy_b * cos_y,
         )
         self._yaw_rate = message.twist.twist.angular.z
-        self._current_speed = math.hypot(
-            message.twist.twist.linear.x,
-            message.twist.twist.linear.y,
-        )
+        self._current_speed = math.hypot(vx_b, vy_b)
 
     def _obstacle_callback(self, message: MarkerArray) -> None:
         """Store obstacles in world frame (convert from base_link)."""
@@ -242,27 +272,42 @@ class PathFollowerNode(Node):
             self._speed_profile = [self.config.target_speed] * N
             return
 
-        # arc lengths and yaws
+        # Arc length at each node, and segment headings/lengths.
+        # seg_yaw[i] is the heading of segment i → i+1 (N-1 entries).
         arc = [0.0]
-        yaws = [0.0]
-        for i in range(N):
-            if i > 0:
-                ds = math.hypot(path[i][0] - path[i-1][0],
-                                path[i][1] - path[i-1][1])
-                arc.append(arc[-1] + ds)
-            if i < N - 1:
-                yaw = math.atan2(path[i+1][1] - path[i][1],
-                                 path[i+1][0] - path[i][0])
-                yaws.append(yaw)
-            elif i > 0:
-                yaws.append(yaws[-1])
+        seg_yaw: List[float] = []
+        seg_len: List[float] = []
+        for i in range(N - 1):
+            dx = path[i+1][0] - path[i][0]
+            dy = path[i+1][1] - path[i][1]
+            ds = math.hypot(dx, dy)
+            seg_len.append(ds)
+            seg_yaw.append(math.atan2(dy, dx) if ds > 1e-9 else
+                           (seg_yaw[-1] if seg_yaw else 0.0))
+            arc.append(arc[-1] + ds)
 
-        # curvature from yaw difference
-        curvatures = [0.0]
-        for i in range(1, N):
-            ds_i = arc[i] - arc[i-1]
-            k = (yaws[i] - yaws[i-1]) / max(ds_i, 1e-6) if ds_i > 1e-6 else 0.0
-            curvatures.append(k)
+        # Node yaw: interior nodes average the two adjacent segments;
+        # the endpoints copy their single segment.  Never fabricate a
+        # zero heading for node 0 — that injects a false curvature
+        # spike at the path start, which the moving average then smears
+        # several metres downstream into the feed-forward term.
+        yaws = [seg_yaw[0]]
+        for i in range(1, N - 1):
+            yaws.append(wrap_angle(
+                seg_yaw[i-1] + 0.5 * wrap_angle(seg_yaw[i] - seg_yaw[i-1])))
+        yaws.append(seg_yaw[-1])
+
+        # Curvature at node i from the turn between its adjacent segments,
+        # normalised by the mean of their lengths.  Angles are wrapped so a
+        # ±π rollover cannot masquerade as an enormous curvature.
+        curvatures = [0.0] * N
+        for i in range(1, N - 1):
+            ds_i = 0.5 * (seg_len[i-1] + seg_len[i])
+            if ds_i > 1e-6:
+                curvatures[i] = wrap_angle(seg_yaw[i] - seg_yaw[i-1]) / ds_i
+        if N > 2:
+            curvatures[0] = curvatures[1]
+            curvatures[-1] = curvatures[-2]
 
         # smooth curvature
         win_size = self._speed_cfg.curvature_smooth_window
@@ -337,137 +382,104 @@ class PathFollowerNode(Node):
             self._publish_stop()
             return
 
-        # ── Hybrid control: pure pursuit base + LQR residual ──
-        # Pure pursuit provides the baseline steering via lookahead.
-        # LQR adds a continuous feedback-only residual, looking at the
-        # SAME lookahead target so the two controllers never fight.
-
-        # 1. Curvature-adaptive lookahead: shorten on curves so pure
-        #    pursuit enters bends progressively instead of snapping
-        #    toward a far-ahead target.
-        nearest_pp = _closest_index(effective_path, self.position)
-        max_k = 0.0
-        cumulative = 0.0
-        for j in range(nearest_pp, min(nearest_pp + 20, len(effective_path) - 1)):
-            cumulative += math.hypot(effective_path[j+1][0] - effective_path[j][0],
-                                     effective_path[j+1][1] - effective_path[j][1])
-            if j < len(self._path_curvatures):
-                max_k = max(max_k, abs(self._path_curvatures[j]))
-            if cumulative > 5.0:
-                break
-        curve_scale = 1.0 / (1.0 + max_k * 3.0)
-        saved_lookahead = self.config.lookahead_distance
-        self.config.lookahead_distance = max(0.8, saved_lookahead * curve_scale)
-
-        # 2. Pure pursuit: base steering (with adaptive lookahead)
-        pp_command = legacy_path_control(
-            self.position, self.yaw_navigation, effective_path,
-            self.config, current_speed=self._current_speed,
+        # ── Lateral control: Apollo-style LQR + feed-forward (primary) ──
+        # Pure pursuit is used ONLY as a fallback when LQR is unavailable
+        # (disabled, vehicle too slow, or no reference curvature).
+        command = {
+            "speed": float(self.config.target_speed),
+            "target_x": self.position[0], "target_y": self.position[1],
+            "e_y": 0.0, "heading_error": 0.0, "steering": 0.0,
+        }
+        lqr_primary = (
+            self._enable_lqr
+            and len(self._path_curvatures) > 0
+            and len(self._path_yaws) > 0
+            and self._current_speed >= self._lqr_cfg.lqr_min_velocity
         )
-        self.config.lookahead_distance = saved_lookahead  # restore
-        base_steering = float(pp_command["steering"])
-
-        # 2. LQR residual: reference = PP lookahead target (unified)
-        residual_steering = 0.0
-        command = pp_command  # default keys from pure pursuit
-        if self._enable_lqr and len(self._path_curvatures) > 0:
-            # e_y from s-projection (correct lateral deviation for RECOVERY)
+        if lqr_primary:
             idx = _projected_index(effective_path, self._path_arc_lengths,
                                    self.position, self._last_proj_idx,
                                    self._s_proj_lookahead)
             self._last_proj_idx = max(0, idx - 3)
+            ref_x, ref_y = effective_path[idx]
             ref_yaw = self._path_yaws[idx] if idx < len(self._path_yaws) else self.yaw_world
-            command["e_y"] = signed_lateral(self.position,
-                {"x": effective_path[idx][0], "y": effective_path[idx][1],
-                 "yaw": ref_yaw})
-            # LQR reference = PP lookahead point (unified with base steering)
-            target_x, target_y = pp_command["target_x"], pp_command["target_y"]
-            # Find path yaw at the lookahead point (may differ from s-proj yaw on curves)
-            pp_idx = _closest_index(effective_path, (target_x, target_y))
-            pp_yaw = self._path_yaws[pp_idx] if pp_idx < len(self._path_yaws) else self.yaw_world
-            # Selective feedforward: only on consistent same-sign curvature
-            near_end = min(idx + 12, len(effective_path))
-            pos_k = neg_k = any_k = 0
-            for j in range(idx, near_end):
-                k = self._path_curvatures[j] if j < len(self._path_curvatures) else 0.0
-                if abs(k) > 0.08: any_k += 1
-                if k > 0: pos_k += 1
-                elif k < 0: neg_k += 1
-            if any_k >= 6 and pos_k != neg_k:
-                k_w = w_sum = 0.0
-                for j in range(idx, near_end):
-                    w = 2.0 ** (-(j - idx) / 2.0)
-                    k = self._path_curvatures[j] if j < len(self._path_curvatures) else 0.0
-                    k_w += w * k; w_sum += w
-                kappa = k_w / w_sum
-            else:
-                kappa = 0.0
-            ref_unified = {"x": target_x, "y": target_y,
-                           "yaw": pp_yaw, "kappa": kappa}
-            lqr_cmd = compute_lqr_control(
+            kappa = self._path_curvatures[idx] if idx < len(self._path_curvatures) else 0.0
+            ref = {"x": ref_x, "y": ref_y, "yaw": ref_yaw, "kappa": kappa}
+            lqr_out = compute_lqr_steering(
                 self.position, self.yaw_world,
                 self._odom_velocity, self._yaw_rate,
-                ref_unified,
-                self._speed_profile if self._use_speed_profile else None,
-                idx,
-                self._current_speed,
+                ref, self._current_speed,
                 self._lqr, self._lqr_cfg,
-                effective_path, self.config,
-                self.yaw_navigation,
-                lqr_e_y_int=self._lqr_e_y_int,
+                e_y_int=self._lqr_e_y_int,
             )
-            residual_steering = float(lqr_cmd["steering"])
-            # Anti-windup: freeze integral when steering is saturated
-            saturated = abs(base_steering + residual_steering) >= self._lqr_cfg.max_steering * 0.98
-            if not saturated:
-                self._lqr_e_y_int += float(lqr_cmd.get("e_y", 0.0)) * 0.05
-                self._lqr_e_y_int = max(-0.5, min(0.5, self._lqr_e_y_int))
-            command["heading_error"] = lqr_cmd.get("heading_error",
-                                                   command.get("heading_error", 0.0))
+            if lqr_out is not None:
+                command["steering"] = float(lqr_out["steering"])
+                command["e_y"] = float(lqr_out["e_y"])
+                command["heading_error"] = float(lqr_out["heading_error"])
+                command["target_x"], command["target_y"] = ref_x, ref_y
+                # Anti-windup: freeze integral when steering saturates
+                saturated = abs(command["steering"]) >= self._lqr_cfg.max_steering * 0.98
+                if not saturated:
+                    self._lqr_e_y_int += command["e_y"] * self._dt
+                    self._lqr_e_y_int = clamp(self._lqr_e_y_int, -0.5, 0.5)
+            else:
+                lqr_primary = False  # fall through to pure pursuit
 
-        # 3. Combine: residual limited to ±10° before adding to base
-        MAX_RESIDUAL = math.radians(10.0)
-        residual_steering = clamp(residual_steering, -MAX_RESIDUAL, MAX_RESIDUAL)
-        command["steering"] = clamp(base_steering + residual_steering,
-                                    -self._lqr_cfg.max_steering,
-                                    self._lqr_cfg.max_steering)
+        if not lqr_primary:
+            pp_command = legacy_path_control(
+                self.position, self.yaw_navigation, effective_path,
+                self.config, current_speed=self._current_speed,
+            )
+            command = pp_command
 
-        # Phase 1.5: replace steering-based derating with curvature-aware speed profile
-        target_speed = float(command["speed"])
+        # Clamp steering to actuator limit (rate/low-pass applied below)
+        command["steering"] = clamp(
+            float(command["steering"]),
+            -self._lqr_cfg.max_steering, self._lqr_cfg.max_steering,
+        )
+
+        # ── Longitudinal control: cascaded PID tracking curvature profile ──
+        # Replaces the old non-hysteretic e_y/yaw speed-cap (limit-cycle source).
+        v_ref = float(command["speed"])
         if self._use_speed_profile and len(self._speed_profile) > 0:
             nearest = _closest_index(effective_path, self.position)
             if nearest < len(self._speed_profile):
-                target_speed = self._speed_profile[nearest]
-                if self._diag_tick < 40:
+                v_ref = self._speed_profile[nearest]
+                if self._diag_tick < 20:
                     self._diag_tick += 1
                     self.get_logger().info(
-                        f'[SPEED-DIAG #{self._diag_tick}] sp[{nearest}]={target_speed:.1f} '
-                        f'actual_v={self._current_speed:.1f} min_sp={min(self._speed_profile):.1f} '
-                        f'max_sp={max(self._speed_profile):.1f}')
+                        f'[SPEED-DIAG #{self._diag_tick}] v_ref={v_ref:.1f} '
+                        f'actual={self._current_speed:.1f}')
 
-        # Phase 3.4: state-based speed override
+        # Speed-loop PID → desired acceleration
+        e_v = v_ref - self._current_speed
+        self._lon_i = clamp(self._lon_i + e_v * self._dt,
+                            -self._lon_i_limit, self._lon_i_limit)
+        a_cmd = (self._lon_kp * e_v
+                 + self._lon_ki * self._lon_i
+                 + self._lon_kd * (e_v - self._lon_e_prev) / self._dt)
+        self._lon_e_prev = e_v
+
+        # Slope (gravity) compensation from reference centreline z-gradient
+        a_cmd += 9.81 * self._terrain_slope_at(self.position) * self._slope_comp_gain
+
+        # Integrate to a speed target, then idle/creep compensation
+        v_target = self._current_speed + a_cmd * self._dt
+        v_target = max(v_target, self._idle_speed)
+
+        # Safety: state machine (gentle, decoupled from small lateral error)
         if self._ctrl_state == _ControlState.EMERGENCY:
-            target_speed = 0.0
-            self._prev_steering = 0.0  # also zero steering on stop
+            v_target = 0.0
+            self._prev_steering = 0.0
         elif self._ctrl_state == _ControlState.SLOWDOWN:
-            target_speed = min(target_speed, 1.0)
-
-        # Speed cap: distance OR heading — either one large → slow down
-        cross_track = float(command.get("e_y", 0.0))
-        heading_err = float(command.get("heading_error", 0.0))
-        if abs(cross_track) > 0.20 or abs(heading_err) > math.radians(25.0):
-            target_speed = min(target_speed, 1.2)
-        elif abs(cross_track) > 0.10 or abs(heading_err) > math.radians(12.0):
-            target_speed = min(target_speed, 1.8)
-        # If way off-track, maintain at least 2 m/s for steering authority
+            v_target = min(v_target, 1.0)
+        # Off-track floor keeps steering authority
         if abs(track_err) > 0.5:
-            target_speed = max(target_speed, 2.0)
+            v_target = max(v_target, 2.0)
 
-        # Speed rate limiter
-        MAX_SPEED_STEP = 0.10   # +4.0 m/s² acceleration
-        MAX_SPEED_DECEL = 0.25  # −5.0 m/s² deceleration (emergency stop)
-        delta_spd = target_speed - self._prev_target_speed
-        clamped_spd = max(-MAX_SPEED_DECEL, min(MAX_SPEED_STEP, delta_spd))
+        # Acceleration / jerk rate limiter
+        delta_spd = v_target - self._prev_target_speed
+        clamped_spd = clamp(delta_spd, -self._lon_decel_step, self._lon_accel_step)
         self._prev_target_speed += clamped_spd
         target_speed = self._prev_target_speed
 
@@ -496,6 +508,25 @@ class PathFollowerNode(Node):
         lookahead.point.y = command["target_y"]
         lookahead.point.z = 0.18
         self.lookahead_pub.publish(lookahead)
+
+
+    def _terrain_slope_at(self, position) -> float:
+        """Local road grade (dz/ds) at the vehicle, from reference centreline z."""
+        pts = self._centerline_pts
+        if not pts or len(pts) < 2:
+            return 0.0
+        best_d2, best_k = float("inf"), 0
+        for k, (cx, cy, _cz) in enumerate(pts):
+            d2 = (position[0] - cx) ** 2 + (position[1] - cy) ** 2
+            if d2 < best_d2:
+                best_d2, best_k = d2, k
+        if best_k < len(pts) - 1:
+            x0, y0, z0 = pts[best_k]
+            x1, y1, z1 = pts[best_k + 1]
+            ds = math.hypot(x1 - x0, y1 - y0)
+            if ds > 1e-6:
+                return (z1 - z0) / ds
+        return 0.0
 
 
 def _projected_index(path, arc_lengths, position, last_idx=0, lookahead_s=0.8) -> int:

@@ -31,14 +31,24 @@ path_follower_node:
     use_speed_profile: true
     desired_clearance: 3.5
     min_speed_obstacle: 2.0
-    lqr_R: 4.0
+    lqr_R: 3.0
     lqr_v_norm: 1.5
-    lqr_Q: [0.05, 5.0, 1.0, 3.0, 0.5] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot]
+    lqr_Q: [0.05, 8.0, 2.0, 4.0, 0.5] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] (retuned for line-holding)
     s_proj_lookahead: 0.8
     max_lateral_accel: 1.8                # curvature ceiling (was 2.5 default)
     terrain_slope_threshold: 0.06
     terrain_min_speed: 1.0
-
+    enable_lqr: true
+    # ── Longitudinal cascaded-PID (Apollo-style) ──
+    lon_kp: 2.0
+    lon_ki: 0.5
+    lon_kd: 0.2
+    lon_i_limit: 2.0
+    idle_speed: 1.0
+    slope_comp_gain: 1.0
+    speed_profile_max: 3.5
+    lon_accel_step: 0.20   # m/s per 50 ms ≈ 4.0 m/s²
+    lon_decel_step: 0.25   # ≈ 5.0 m/s²
 
 actuator_adapter_node:
   ros__parameters:
