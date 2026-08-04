@@ -62,13 +62,19 @@ sudo apt-get install -y xvfb x11vnc fluxbox novnc websockify
 # times out on networks in China). This rewrites the default sources list to
 # point at the mirror and exports ROSDISTRO_INDEX_URL so the index fetch also
 # uses the mirror. Harmless on networks where GitHub is reachable.
+#
+# NOTE: rosdep is OPTIONAL for this project — all required dependencies are
+# already installed via apt above (ros-humble-* + gz-harmonic + colcon).
+# We attempt to refresh the rosdep cache, but a failure (e.g. mirror hiccup,
+# EOL release data) must NOT abort the install: we fall back to a plain
+# `colcon build`, which succeeds because apt already provided everything.
 ROSDEP_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/rosdistro"
 sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/base.yaml' > /etc/ros/rosdep/sources.list.d/20-default.list"
 sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/python.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
 sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/ruby.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
 sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/osx-homebrew.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
-export ROSDISTRO_INDEX_URL="${ROSDEP_MIRROR}/index-v4.yaml"
-rosdep update || rosdep update   # retry once on transient timeout
+export ROSDISTRO_INDEX_URL="${ROSDEP_MIRROR}/index.yaml"
+rosdep update || echo "WARN: rosdep update failed (non-fatal); continuing without it."
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 "$SCRIPT_DIR/build.sh"

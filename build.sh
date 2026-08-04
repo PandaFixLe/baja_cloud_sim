@@ -8,7 +8,11 @@ cd "$SCRIPT_DIR"
 # Harmonic-on-Humble packages come from the OSRF repository and intentionally
 # conflict with Humble's default Fortress ros_gz debs. Skip these two rosdep
 # keys because install_ubuntu2204.sh already installed their Harmonic variants.
+#
+# rosdep is best-effort: all runtime deps are already provided by apt, so if
+# rosdep fails (mirror/network/EOL-data issues) we skip it and build directly.
 rosdep install --from-paths src --ignore-src -r -y --rosdistro humble \
-  --skip-keys "ros_gz_sim ros_gz_bridge"
+  --skip-keys "ros_gz_sim ros_gz_bridge" \
+  || echo "WARN: rosdep install skipped (non-fatal); apt already provides deps."
 colcon build --event-handlers console_direct+
 echo "Built workspace at $SCRIPT_DIR/install"
