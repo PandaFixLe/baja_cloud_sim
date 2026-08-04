@@ -67,7 +67,6 @@ sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/base.yaml' > /etc/ros/rosdep/sour
 sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/python.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
 sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/ruby.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
 sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/osx-homebrew.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
-sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/releases/fuerte.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
 export ROSDISTRO_INDEX_URL="${ROSDEP_MIRROR}/index-v4.yaml"
 rosdep update || rosdep update   # retry once on transient timeout
 
