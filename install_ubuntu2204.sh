@@ -63,11 +63,11 @@ sudo apt-get install -y xvfb x11vnc fluxbox novnc websockify
 # point at the mirror and exports ROSDISTRO_INDEX_URL so the index fetch also
 # uses the mirror. Harmless on networks where GitHub is reachable.
 ROSDEP_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/rosdistro"
-sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/rosdep/base.yaml' > /etc/ros/rosdep/sources.list.d/20-default.list"
-sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/rosdep/python.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
-sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/rosdep/ruby.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
-sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/rosdep/osx-homebrew.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
-sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/releases/fuerte.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/base.yaml' > /etc/ros/rosdep/sources.list.d/20-default.list"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/python.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/ruby.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/rosdep/osx-homebrew.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/releases/fuerte.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
 export ROSDISTRO_INDEX_URL="${ROSDEP_MIRROR}/index-v4.yaml"
 rosdep update || rosdep update   # retry once on transient timeout
 
