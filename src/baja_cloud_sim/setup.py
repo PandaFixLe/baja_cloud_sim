@@ -35,6 +35,7 @@ setup(
     entry_points={
         "console_scripts": [
             "generate_scenario = baja_cloud_sim.scenario_generator:main",
+            "generate_loop_scenario = baja_cloud_sim.scenario_generator:main_loop",
             "truth_perception = baja_cloud_sim.truth_perception_node:main",
             "frenet_planner = baja_cloud_sim.frenet_planner_node:main",
             "path_follower = baja_cloud_sim.path_follower_node:main",

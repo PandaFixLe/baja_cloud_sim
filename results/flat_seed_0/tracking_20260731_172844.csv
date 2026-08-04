@@ -1,1 +1,0 @@
-time_s,x,y,yaw_rad,speed_mps,command_speed_mps,steering_rad,tracking_error_m,center_error_m,minimum_clearance_m,planning_ms,planner_status,collision_count,progress_percent

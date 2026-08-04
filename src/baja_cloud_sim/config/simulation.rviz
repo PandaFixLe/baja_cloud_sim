@@ -76,6 +76,11 @@ Visualization Manager:
       Name: Closed Loop Metrics
       Topic:
         Value: /simulation/metrics
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Finish Line
+      Topic:
+        Value: /finish_line_marker
     - Class: rviz_default_plugins/PointStamped
       Enabled: true
       Name: Lookahead Point

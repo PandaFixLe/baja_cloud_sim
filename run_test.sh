@@ -8,9 +8,11 @@ OBSTACLES=0  # ← no box obstacles
 USE_RVIZ=true
 USE_GZ_GUI=true
 USE_VIDEO=true
+FINISH_MODE="none"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seed) SEED="$2"; shift 2 ;;
+    --finish-mode) FINISH_MODE="$2"; shift 2 ;;
     --no-rviz) USE_RVIZ=false; shift ;;
     --headless-gazebo) USE_GZ_GUI=false; shift ;;
     --no-video) USE_VIDEO=false; shift ;;
@@ -39,11 +41,12 @@ if [[ "$USE_VIDEO" == "true" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
   exit 1
 fi
 
-ros2 run baja_cloud_sim generate_scenario --output "$GENERATED" --seed "$SEED" --obstacles "$OBSTACLES"
+ros2 run baja_cloud_sim generate_loop_scenario --output "$GENERATED" --seed "$SEED" --obstacles "$OBSTACLES"
 ros2 launch baja_cloud_sim simulation.launch.py \
-  world_file:="$GENERATED/baja_100m.sdf" \
-  scenario_file:="$GENERATED/scenario.json" \
+  world_file:="$GENERATED/baja_loop.sdf" \
+  scenario_file:="$GENERATED/loop_scenario.json" \
   results_dir:="$RESULTS" \
+  finish_mode:="$FINISH_MODE" \
   use_rviz:="$USE_RVIZ" \
   use_gz_gui:="$USE_GZ_GUI" \
   use_video:="$USE_VIDEO" \

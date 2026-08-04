@@ -49,6 +49,14 @@ path_follower_node:
     speed_profile_max: 3.5
     lon_accel_step: 0.20   # m/s per 50 ms ≈ 4.0 m/s²
     lon_decel_step: 0.25   # ≈ 5.0 m/s²
+    # ── Finish / 终点逻辑（line | circle | time | none） ──
+    finish_mode: "none"            # none | line | circle | time
+    finish_runout_m: 20.0          # 冲过终点后再 20m 停车区
+    finish_decel: 1.5              # 减速停车减速度（≤ lon_decel_step 等效 5，更丝滑）
+    finish_s: -1.0                 # -1=自动(闭环→0 / 开放赛道→总长-runout)
+    finish_target_lap: 1           # circle 仅用：跑满几圈后停
+    finish_time_limit_s: 1200.0    # time 仅用：20 min
+    finish_max_duration_s: 600.0   # 全局安全看门狗（防触发失效无限跑）
 
 actuator_adapter_node:
   ros__parameters:

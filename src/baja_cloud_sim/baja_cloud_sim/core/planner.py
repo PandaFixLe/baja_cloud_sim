@@ -19,16 +19,26 @@ def plan_frenet_path(
     right_limits: Sequence[float],
     obstacles: Sequence[Dict[str, float]],
     config: Optional[PlannerConfig] = None,
+    closed_loop: bool = False,
 ) -> PlanResult:
     started = time.perf_counter()
     cfg = config or PlannerConfig()
-    if not centerline or start_index >= len(centerline) - 2:
+    if not centerline:
+        return PlanResult([], [], False, 0.0, 0.0, "centerline unavailable")
+    # On a closed loop the seam is just another piece of track — never treat
+    # being near the end as "goal reached" (that would stall the car at the
+    # seam and force it to re-plan from the start, looking like a teleport).
+    if not closed_loop and start_index >= len(centerline) - 2:
         return PlanResult([], [], False, 0.0, 0.0, "centerline unavailable or goal reached")
 
-    center_spacing = max(0.05, centerline[min(start_index + 1, len(centerline) - 1)]["s"] - centerline[start_index]["s"])
+    center_spacing = max(0.05, centerline[1]["s"] - centerline[0]["s"]) if len(centerline) > 1 else 0.5
     index_step = max(1, int(round(cfg.layer_spacing_m / center_spacing)))
     horizon_points = max(2, int(round(cfg.horizon_m / center_spacing)))
-    indices = list(range(start_index + index_step, min(len(centerline), start_index + horizon_points + 1), index_step))
+    if closed_loop:
+        total = len(centerline)
+        indices = [(start_index + k * index_step) % total for k in range(1, (horizon_points // index_step) + 1)]
+    else:
+        indices = list(range(start_index + index_step, min(len(centerline), start_index + horizon_points + 1), index_step))
     if not indices:
         return PlanResult([], [], False, 0.0, 0.0, "empty planning horizon")
 

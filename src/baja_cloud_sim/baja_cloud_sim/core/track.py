@@ -127,6 +127,26 @@ def generate_centerline(
     return points
 
 
+def generate_straight_centerline(length: float = 100.0, spacing: float = 0.5) -> List[Dict[str, float]]:
+    """Open *pure* straight course along +X, used by the line / 直线障碍 /
+    单圈计时 events (a point-to-point course with a finite finish line).
+
+    No curvature — just a 100 m straight (with hills / speed bumps from
+    ``terrain_height``) followed by the plain 20 m runout appended by
+    ``_extend_runout`` in scenario_generator. The vehicle decelerates and
+    stops within the runout after crossing the finish line.
+    """
+    points: List[Dict[str, float]] = []
+    count = int(round(length / spacing)) + 1
+    for index in range(count):
+        s = min(length, index * spacing)
+        points.append({
+            "s": s, "x": s, "y": 0.0,
+            "z": terrain_height(s), "yaw": 0.0, "half_width": 4.0,
+        })
+    return points
+
+
 def generate_boundaries(centerline) -> Tuple[List[Point], List[Point]]:
     left, right = [], []
     for point in centerline:

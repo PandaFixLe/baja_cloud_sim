@@ -19,6 +19,7 @@ def generate_launch_description():
     use_gz_gui = LaunchConfiguration("use_gz_gui")
     use_video = LaunchConfiguration("use_video")
     video_path = LaunchConfiguration("video_path")
+    finish_mode = LaunchConfiguration("finish_mode")
     params = str(share / "config" / "params.yaml")
     bridge = str(share / "config" / "bridge.yaml")
     rviz = str(share / "config" / "simulation.rviz")
@@ -32,6 +33,8 @@ def generate_launch_description():
         DeclareLaunchArgument("use_gz_gui", default_value="true"),
         DeclareLaunchArgument("use_video", default_value="true"),
         DeclareLaunchArgument("video_path", default_value="results/gazebo.mp4"),
+        DeclareLaunchArgument("finish_mode", default_value="none",
+                              description="Finish/终点逻辑: none | line | circle | time"),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(ros_gz_share / "launch" / "gz_sim.launch.py")),
             launch_arguments={"gz_args": ["-r -v 3 --render-engine-gui ogre ", world]}.items(),
@@ -46,7 +49,7 @@ def generate_launch_description():
         Node(package="robot_state_publisher", executable="robot_state_publisher", name="robot_state_publisher", parameters=[{"robot_description": robot_description, "use_sim_time": True}], output="screen"),
         Node(package="baja_cloud_sim", executable="truth_perception", name="truth_perception_node", parameters=[params, {"scenario_file": scenario}], output="screen"),
         Node(package="baja_cloud_sim", executable="frenet_planner", name="frenet_planner_node", parameters=[params], output="screen"),
-        Node(package="baja_cloud_sim", executable="path_follower", name="path_follower_node", parameters=[params], output="screen"),
+        Node(package="baja_cloud_sim", executable="path_follower", name="path_follower_node", parameters=[params, {"finish_mode": finish_mode}], output="screen"),
         Node(package="baja_cloud_sim", executable="actuator_adapter", name="actuator_adapter_node", parameters=[params], output="screen"),
         Node(package="baja_cloud_sim", executable="evaluator", name="evaluator_node", parameters=[params, {"scenario_file": scenario, "results_dir": results}], output="screen"),
         Node(package="baja_cloud_sim", executable="video_recorder", name="video_recorder_node", parameters=[{"video_path": video_path, "use_sim_time": True}], condition=IfCondition(use_video), output="screen"),

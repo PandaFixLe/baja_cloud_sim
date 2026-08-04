@@ -71,22 +71,37 @@ sudo apt-get install -y ffmpeg
 ### 运行
 
 ```bash
-./run.sh --seed 42 --obstacles 5          # 完整图形界面
-./run.sh --seed 0  --obstacles 0          # 空赛道，纯跟踪性能测试
+./run.sh --seed 42 --obstacles 5 --finish-mode circle   # 闭环赛道 + 终点减速停车
+./run_line.sh --seed 42 --obstacles 5 --finish-mode line # 直线开放赛道 + 终点减速停车
+./run.sh --seed 0  --obstacles 0                         # 空赛道，纯跟踪性能测试（无终点逻辑）
 ```
 
 | 参数 | 说明 |
 |------|------|
 | `--seed N` | 场景随机种子（决定障碍布局），默认 42 |
 | `--obstacles N` | 障碍物数量，默认 5 |
+| `--finish-mode MODE` | 终点模式：`none`（默认，不停车）/ `line` / `circle` / `time` |
 | `--headless-gazebo` | 关闭 Gazebo 图形窗口（仍录像） |
 | `--no-rviz` | 关闭 RViz |
 | `--no-video` | 关闭录像（调试时加速） |
 
+> **两种场景脚本**：
+> - `run.sh` 始终加载**闭环赛道**（`baja_loop.sdf`），无论 `--finish-mode` 传什么场景都是圈；
+> - `run_line.sh` 加载**直线开放赛道**（`baja_line.sdf`），需配合 `--finish-mode line`。
+> 二者不能混用——`run.sh --finish-mode line` 跑的仍是圈道，只是按直线终点逻辑处理。
+
+**终点逻辑（`finish_mode`）**：
+- `line`：在赛道末端前 `finish_runout_m`（默认 20 m）处画红色终点线，过线后按匀减速 profile 在停车区停住；
+- `circle`：跑满 `finish_target_lap`（默认 1 圈）后，过红线（弧长 0 处）减速停车；
+- `time`：运行 `finish_time_limit_s`（默认 1200 s）后停止，**不画终点线**；
+- `none`：一直跑，不停车（用于纯控制性能测试）。
+
+RViz 中会以红色半透明 `LINE_STRIP` 显示终点线（`/finish_line_marker` 话题，`time` 模式除外）。
+
 无桌面环境下的典型用法：
 
 ```bash
-./run.sh --seed 42 --obstacles 5 --headless-gazebo --no-rviz
+./run.sh --seed 42 --obstacles 5 --finish-mode circle --headless-gazebo --no-rviz
 ```
 
 运行结束后自动调用 `tools/plot_tracking.py` 生成轨迹图。
@@ -196,6 +211,7 @@ Gazebo AckermannSteering 插件
 | `/obstacle_markers` | MarkerArray | 障碍物包围盒 |
 | `/planning_debug` | MarkerArray | 规划器候选轨迹调试 |
 | `/simulation/metrics` | MarkerArray | 实时指标文字叠加 |
+| `/finish_line_marker` | Marker (LINE_STRIP) | 红色半透明终点线（`time` 模式不发布） |
 
 ---
 
@@ -320,6 +336,23 @@ path_follower_node:
     terrain_slope_threshold: 0.06
     terrain_min_speed: 1.0
 ```
+
+### 终点逻辑（finish）
+
+```yaml
+    finish_mode: "none"            # none | line | circle | time
+    finish_runout_m: 20.0          # 冲过终点线后再 20 m 作为停车区
+    finish_decel: 1.5              # 终点减速停车减速度 (m/s²)
+    finish_s: -1.0                 # 红线弧长位置；-1 = 自动
+                                   #   line  → 总长 - finish_runout_m
+                                   #   circle → 0（闭环 seam 处）
+    finish_target_lap: 1           # circle 专用：跑满几圈后才允许停车
+    finish_time_limit_s: 1200.0    # time 专用：超时停止（秒）
+    finish_max_duration_s: 600.0   # 全局安全看门狗：防止终点触发失效而无限运行
+```
+
+过红线后 `path_follower` 进入"braking_to_stop"状态，豁免安全状态机与离道限速，
+改由 `finish_decel` 驱动的匀减速 profile 平滑降速，在 `finish_s + finish_runout_m` 处停住。
 
 ### 规划器
 
@@ -523,6 +556,20 @@ Frenet(s,l) 双轴反馈、两级安全预警、`controller_mode` 三模式切�
 | `v1.4` / `v1.4.1` | v1.4 | LQR | 过渡版本 |
 | `v1.5` | v1.5 | PP + LQR 残差 | 纯追踪基底 + LQR 残差（±3° 反馈上限）+ 曲率速度剖面 + 3 级状态机 |
 | **`v2`** | **v2** | **LQR + 前馈** | **Apollo 式主控 + 级联 PID 纵向 + 执行器滞后修复** |
+| **`v2.1`** | **v2.1** | **LQR + 前馈** | **新增终点减速停车逻辑 + 红色终点线 RViz Marker** |
+
+### v2.1 相对 v2 的变更
+
+1. **终点识别与减速停车**——新增 `finish_mode`（`line` / `circle` / `time` / `none`）：
+   - 终点位置按赛道固定（可查表），过红线后进入匀减速 profile，在 `finish_s + finish_runout_m` 处平滑停住；
+   - 停车阶段豁免安全状态机与离道限速，避免急刹或绕圈不止；
+   - `line` 用满 20 m 缓冲；`circle` 跑满 `finish_target_lap` 圈后过红线停车；
+   - `time` 模式按 `finish_time_limit_s` 超时停止，不画终点线。
+2. **红色终点线 Marker**——`path_follower` 在 `finish_s` 处发布 `/finish_line_marker`
+   （红色半透明 `LINE_STRIP`，`TRANSIENT_LOCAL` 持久化），RViz 中可视化终点位置。
+3. **`.gitignore` 清理**——`build/`、`install/`、`log/`、`results/`、`runtime/` 不再入库，
+   zip 体积大幅减小，且不再携带绝对路径符号链接；使用者解压后执行
+   `./install_ubuntu2204.sh` 即可重新构建。
 
 ### v2 相对 v1.5 的变更
 

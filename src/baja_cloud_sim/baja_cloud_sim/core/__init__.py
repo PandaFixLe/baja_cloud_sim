@@ -60,5 +60,6 @@ from .track import (  # noqa: F401
     generate_boundaries,
     generate_centerline,
     generate_obstacles,
+    generate_straight_centerline,
     smooth_centerline_c2,
 )

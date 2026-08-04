@@ -7,13 +7,13 @@ from enum import Enum
 
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import Point, PointStamped
 from nav_msgs.msg import Odometry, Path as PathMessage
 from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Float32, String
-from visualization_msgs.msg import MarkerArray
+from visualization_msgs.msg import Marker, MarkerArray
 
 from .core import (
     ControllerConfig,
@@ -184,6 +184,50 @@ class PathFollowerNode(Node):
         self._lon_e_prev = 0.0
         # Lift speed-profile ceiling to a tracking-comfortable value
         self._speed_cfg.max_speed = float(self.get_parameter("speed_profile_max").value)
+
+        # ── Finish / 终点逻辑参数 ──
+        self.declare_parameter("finish_mode", "none")
+        self.declare_parameter("finish_runout_m", 20.0)
+        self.declare_parameter("finish_decel", 1.5)
+        self.declare_parameter("finish_s", -1.0)
+        self.declare_parameter("finish_target_lap", 1)
+        self.declare_parameter("finish_time_limit_s", 1200.0)
+        self.declare_parameter("finish_max_duration_s", 600.0)
+        self._finish_mode = str(self.get_parameter("finish_mode").value)
+        self._finish_runout_m = float(self.get_parameter("finish_runout_m").value)
+        self._finish_decel = float(self.get_parameter("finish_decel").value)
+        self._finish_s_param = float(self.get_parameter("finish_s").value)
+        self._finish_target_lap = int(self.get_parameter("finish_target_lap").value)
+        self._finish_time_limit = float(self.get_parameter("finish_time_limit_s").value)
+        self._finish_max_duration = float(self.get_parameter("finish_max_duration_s").value)
+        # Centreline progress / lap state (populated by _centerline_callback)
+        self._cl_xy = []
+        self._cl_arc = []
+        self._cl_length = 0.0
+        self._cl_loop = False
+        self._cl_last_idx = 0
+        self._cl_last_s = 0.0
+        self._cl_s = 0.0  # current arc-length progress along the centreline
+        self._finish_s = 0.0
+        self._stop_s = 0.0
+        self._lap_count = 0
+        self._lap_idx_progress = 0  # signed index progress for loop lap counting
+        self._finish_armed = False
+        self._has_moved = False
+        self._finish_t0_set = False
+        self._finish_t0 = self.get_clock().now()
+        self._finished = False
+        self._finish_watchdog_t0 = self.get_clock().now()
+        self._finish_pub = self.create_publisher(String, "/finish/status", 10)
+        self._finish_pub.publish(String(data="RUNNING"))
+        # Red finish-line marker (rviz).  Latched so it shows even before the
+        # follower starts moving.  Not used in time mode.
+        self._finish_line_pub = self.create_publisher(
+            Marker,
+            "/finish_line_marker",
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL))
+
         self.command_pub = self.create_publisher(AckermannDriveStamped, "/cmd_control", 10)
         self.lookahead_pub = self.create_publisher(PointStamped, "/lookahead_point", 10)
         self.create_subscription(NavSatFix, "/gps/fix", self._gps_callback, 20)
@@ -251,11 +295,109 @@ class PathFollowerNode(Node):
         self._obstacles = obstacles
 
     def _centerline_callback(self, message: PathMessage) -> None:
-        """Store (x, y, z) for nearest-neighbour terrain derating."""
+        """Store centreline for terrain derating and finish-progress tracking."""
         pts = [(p.pose.position.x, p.pose.position.y, p.pose.position.z)
                for p in message.poses]
-        if pts:
-            self._centerline_pts = pts
+        if not pts:
+            return
+        self._centerline_pts = pts
+        cl_xy = [(x, y) for (x, y, _z) in pts]
+        arc = [0.0]
+        for i in range(1, len(cl_xy)):
+            arc.append(arc[-1] + math.hypot(cl_xy[i][0] - cl_xy[i - 1][0],
+                                           cl_xy[i][1] - cl_xy[i - 1][1]))
+        self._cl_xy = cl_xy
+        self._cl_arc = arc
+        self._cl_length = arc[-1] if arc else 0.0
+        # Closed loop if the first and last centreline points coincide.
+        self._cl_loop = math.hypot(cl_xy[0][0] - cl_xy[-1][0],
+                                   cl_xy[0][1] - cl_xy[-1][1]) < 3.0
+        # Resolve the finish-line arc position.
+        if self._finish_s_param >= 0.0:
+            self._finish_s = self._finish_s_param
+        elif self._cl_loop:
+            self._finish_s = 0.0
+        else:
+            self._finish_s = max(0.0, self._cl_length - self._finish_runout_m)
+        # Stop target = finish line + fixed runout (cyclic on a loop).
+        self._stop_s = self._finish_s + self._finish_runout_m
+        # Only initialise the tracked index/s on the FIRST centreline message.
+        # truth_perception re-publishes the centreline every 1 Hz with latched
+        # QoS, so resetting _cl_last_idx here every time would yank the windowed
+        # progress search back to the start, freezing cl_s and breaking both the
+        # finish speed-cap (line mode) and lap counting (circle mode).
+        if not getattr(self, "_cl_initialized", False):
+            self._cl_last_idx = 0
+            self._cl_last_s = 0.0
+            self._lap_idx_progress = 0
+            self._cl_initialized = True
+        # Draw the red finish line at finish_s (skipped in time mode).
+        if self._finish_mode != "time":
+            self._publish_finish_line()
+
+    def _publish_finish_line(self) -> None:
+        """Draw a red finish line across the track at finish_s (rviz marker).
+
+        The line is centred on the centreline at arc-length finish_s and
+        oriented perpendicular to the local track heading, so it visually
+        spans the track width.  Published once per centreline update (latched
+        QoS).  Time mode does not use a spatial finish line.
+        """
+        if self._finish_mode == "time" or not self._cl_xy or not self._cl_arc:
+            return
+        arc = self._cl_arc
+        L = self._cl_length
+        fs = self._finish_s
+        # Target arc-length, wrapped into [0, L) for closed loops.
+        if self._cl_loop:
+            fs = fs % L
+        # Find the centreline segment containing fs and interpolate the point.
+        n = len(self._cl_xy)
+        # Locate index i with arc[i] <= fs < arc[i+1].
+        i = 0
+        for k in range(n - 1):
+            if arc[k] <= fs <= arc[k + 1]:
+                i = k
+                break
+        else:
+            i = n - 2 if n >= 2 else 0
+        ax, ay = self._cl_xy[i]
+        bx, by = self._cl_xy[(i + 1) % n] if self._cl_loop else self._cl_xy[min(i + 1, n - 1)]
+        seg_len = math.hypot(bx - ax, by - ay)
+        if seg_len < 1e-6:
+            tx, ty = 1.0, 0.0
+            cx, cy = ax, ay
+        else:
+            t = (fs - arc[i]) / seg_len if arc[i] != arc[min(i + 1, n - 1)] else 0.0
+            t = max(0.0, min(1.0, t))
+            cx, cy = ax + t * (bx - ax), ay + t * (by - ay)
+            tx, ty = (bx - ax) / seg_len, (by - ay) / seg_len
+        # Perpendicular (across track) unit vector.
+        nx, ny = -ty, tx
+        # Half-width of the visible line (spans the track).
+        half_w = 3.0
+        # Z height (slightly above ground).
+        cz = (self._centerline_pts[i][2] if hasattr(self, "_centerline_pts")
+              and i < len(self._centerline_pts) else 0.0) + 0.05
+        marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = "finish_line"
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+        # Two end points across the track, perpendicular to heading.
+        p1 = Point(x=cx + nx * half_w, y=cy + ny * half_w, z=cz)
+        p2 = Point(x=cx - nx * half_w, y=cy - ny * half_w, z=cz)
+        marker.points = [p1, p2]
+        marker.scale.x = 0.35  # line thickness
+        marker.color.r = 1.0
+        marker.color.g = 0.0
+        marker.color.b = 0.0
+        marker.color.a = 0.9
+        marker.lifetime.sec = 0
+        marker.lifetime.nanosec = 0
+        self._finish_line_pub.publish(marker)
 
     def _path_callback(self, message: PathMessage) -> None:
         self.path = [(pose.pose.position.x, pose.pose.position.y) for pose in message.poses]
@@ -342,10 +484,47 @@ class PathFollowerNode(Node):
             self._publish_stop()
             return
 
+        # Global finish watchdog (safety net if the trigger never fires).
+        if (not self._finished and self._finish_mode != "none"
+                and (self.get_clock().now() - self._finish_watchdog_t0).nanoseconds / 1e9
+                > self._finish_max_duration):
+            self._finished = True
+            self._finish_pub.publish(String(data="FINISHED"))
+            self.get_logger().warn("Finish watchdog triggered (max duration exceeded).")
+            self._publish_stop()
+            return
+
         # Freewheel: if planner reports infeasible, keep using the last
         # valid path for up to ~300 ms (6 cycles @ 20 Hz) before stopping.
         # Before the first planner status arrives the vehicle is still
         # stationary — don't count those cycles as infeasible.
+
+        # ── Finish pre-check (must run BEFORE the infeasible-stop guards) ──
+        # When the graceful finish is actively braking the car to a stop, the
+        # planner deliberately returns INFEASIBLE near the end of the track
+        # ("goal reached").  If we let the infeasible guards below call
+        # _publish_stop() the car is yanked to a halt by an emergency stop
+        # instead of coasting to stop_s — and the FINISHED latch (which only
+        # runs further down) is skipped entirely, so `fin` stays False forever.
+        # So compute the finish state up front and exempt the braking-to-stop
+        # case from every hard stop guard in this routine.
+        if self._finish_mode != "none":
+            self._update_progress()
+            self._update_finish_arm()
+            if self._current_speed > 0.5:
+                self._has_moved = True
+        # Treat the car as "braking to stop" once it crosses the finish line
+        # (cl_s >= finish_s) and the finish logic is armed.  This is earlier
+        # than waiting for the speed cap to drop below idle, which is critical:
+        # the planner returns INFEASIBLE near end-of-track, and without this
+        # early exemption the infeasible-stop guard yanks the car to a halt
+        # instead of letting it coast smoothly under the finish profile.
+        braking_to_stop = (
+            self._finish_mode != "none"
+            and self._finish_armed
+            and self._cl_s >= self._finish_s
+        )
+
         if self._planner_status_received and (
                 not self.planner_feasible or len(self.path) < 2):
             self._infeasible_count += 1
@@ -366,7 +545,11 @@ class PathFollowerNode(Node):
 
         effective_path = self.path
         if self._infeasible_count > 0:
-            if self._infeasible_count <= 6 and len(self._last_valid_path) >= 2:
+            if braking_to_stop and len(self._last_valid_path) >= 2:
+                # Finishing: keep tracking the last valid path so the car can
+                # coast to stop_s under the finish speed cap (no emergency stop).
+                effective_path = self._last_valid_path
+            elif self._infeasible_count <= 6 and len(self._last_valid_path) >= 2:
                 effective_path = self._last_valid_path
             else:
                 self._publish_stop()
@@ -374,13 +557,16 @@ class PathFollowerNode(Node):
 
         if self.last_path_time is not None:
             age_ns = (self.get_clock().now() - self.last_path_time).nanoseconds
-            if age_ns > 400_000_000:
+            if age_ns > 400_000_000 and not braking_to_stop:
                 self._publish_stop()
                 return
 
         if len(effective_path) < 2:
-            self._publish_stop()
-            return
+            if braking_to_stop and len(self._last_valid_path) >= 2:
+                effective_path = self._last_valid_path
+            else:
+                self._publish_stop()
+                return
 
         # ── Lateral control: Apollo-style LQR + feed-forward (primary) ──
         # Pure pursuit is used ONLY as a fallback when LQR is unavailable
@@ -400,8 +586,15 @@ class PathFollowerNode(Node):
             idx = _projected_index(effective_path, self._path_arc_lengths,
                                    self.position, self._last_proj_idx,
                                    self._s_proj_lookahead)
-            self._last_proj_idx = max(0, idx - 3)
-            ref_x, ref_y = effective_path[idx]
+            # Guard against a length mismatch between the path and its cached
+            # arc-lengths (e.g. during freewheel after planner infeasibility),
+            # which would otherwise raise IndexError and kill the node.
+            if not effective_path:
+                lqr_primary = False
+            else:
+                idx = min(max(idx, 0), len(effective_path) - 1)
+                self._last_proj_idx = max(0, idx - 3)
+                ref_x, ref_y = effective_path[idx]
             ref_yaw = self._path_yaws[idx] if idx < len(self._path_yaws) else self.yaw_world
             kappa = self._path_curvatures[idx] if idx < len(self._path_curvatures) else 0.0
             ref = {"x": ref_x, "y": ref_y, "yaw": ref_yaw, "kappa": kappa}
@@ -451,6 +644,18 @@ class PathFollowerNode(Node):
                         f'[SPEED-DIAG #{self._diag_tick}] v_ref={v_ref:.1f} '
                         f'actual={self._current_speed:.1f}')
 
+        # ── Finish / 终点逻辑：锚定停车目标，平滑减速至停止 ──
+        # NOTE: _update_progress / _update_finish_arm already ran early in this
+        # method (see "Finish pre-check") so the infeasible-stop guards above
+        # could exempt the braking-to-stop case.  Re-running them here would be
+        # redundant; we only apply the cap and the FINISHED latch now.
+        if self._finish_mode != "none":
+            if self._finished:
+                v_ref = 0.0  # hold once stopped (prevents re-accel on loop / early stop)
+            else:
+                v_ref = min(v_ref, self._finish_speed_cap())
+            self._maybe_publish_finished()
+
         # Speed-loop PID → desired acceleration
         e_v = v_ref - self._current_speed
         self._lon_i = clamp(self._lon_i + e_v * self._dt,
@@ -465,17 +670,43 @@ class PathFollowerNode(Node):
 
         # Integrate to a speed target, then idle/creep compensation
         v_target = self._current_speed + a_cmd * self._dt
-        v_target = max(v_target, self._idle_speed)
+        # While finishing, allow the speed to fall to 0 so the vehicle can
+        # actually stop. But keep the idle floor *until* we are genuinely
+        # braking to a stop (finish cap below idle_speed) — otherwise arming
+        # a finish mode at standstill (line / time) removes the creep that
+        # gets the vehicle moving in the first place and it never starts.
+        if self._finished:
+            idle = 0.0
+        elif self._finish_armed and self._finish_speed_cap() < self._idle_speed:
+            idle = 0.0
+        else:
+            idle = self._idle_speed
+        v_target = max(v_target, idle)
 
-        # Safety: state machine (gentle, decoupled from small lateral error)
-        if self._ctrl_state == _ControlState.EMERGENCY:
-            v_target = 0.0
-            self._prev_steering = 0.0
-        elif self._ctrl_state == _ControlState.SLOWDOWN:
-            v_target = min(v_target, 1.0)
-        # Off-track floor keeps steering authority
-        if abs(track_err) > 0.5:
-            v_target = max(v_target, 2.0)
+        # While the finish logic is actively braking the vehicle to a stop
+        # (cap below idle speed), the safety state machine and off-track floor
+        # MUST be suppressed.  Otherwise, in the runout / stop zone the lateral
+        # tracking error grows (no more centreline guidance, car drifting off the
+        # dirt), which throws the car into SLOWDOWN (caps v at 1.0 m/s) or trips
+        # the off-track floor (forces v >= 2.0 m/s) — both prevent the speed from
+        # ever reaching ~0, so FINISHED never latches and the car rolls off the
+        # track.  When braking to stop we let the finish cap drive v down to 0.
+        braking_to_stop = (
+            self._finish_mode != "none"
+            and self._finish_armed
+            and self._cl_s >= self._finish_s
+        )
+        if not braking_to_stop:
+            # Safety: state machine (gentle, decoupled from small lateral error)
+            if self._ctrl_state == _ControlState.EMERGENCY:
+                v_target = 0.0
+                self._prev_steering = 0.0
+            elif self._ctrl_state == _ControlState.SLOWDOWN:
+                v_target = min(v_target, 1.0)
+            # Off-track floor keeps steering authority. Suppressed once finished
+            # so the vehicle can actually hold at zero.
+            if abs(track_err) > 0.5 and not self._finished:
+                v_target = max(v_target, 2.0)
 
         # Acceleration / jerk rate limiter
         delta_spd = v_target - self._prev_target_speed
@@ -527,6 +758,174 @@ class PathFollowerNode(Node):
             if ds > 1e-6:
                 return (z1 - z0) / ds
         return 0.0
+
+
+    def _update_progress(self) -> None:
+        """Forward-tracked projection of the vehicle onto the centreline.
+
+        Updates self._cl_s and, on a closed loop, counts laps via s-wrap.
+
+        The search window must respect the track topology:
+          * Closed loop  → scan a *continuous window* around the last index
+            (with modulo wrap).  A global nearest-point search snaps to the
+            geometrically closest point, which on a symmetric rectangular loop
+            is the identical point on the *opposite* straight — so ``best_i``
+            teleports across the loop and the lap counter runs wild (cl_s=117
+            already read as lap 10).  A windowed search keeps ``best_i`` anchored
+            to the vehicle's real forward position, so lap counting is exact and
+            the index advances one point at a time.
+          * Open track   → scan the *entire* centreline for the nearest point.
+            A fixed forward window (or the 1 Hz centreline re-publish resetting
+            _cl_last_idx) froze cl_s near ~90 m, so the stop target at 120 m
+            was never reached and the car blew past the finish without
+            decelerating.  O(n) over a few-hundred-point centreline is
+            negligible, and a global search is robust to the index being reset.
+        """
+        if not self._cl_xy or self.position is None:
+            return
+        px, py = self.position
+        n = len(self._cl_xy)
+        if self._cl_loop and n > 1:
+            # Continuous windowed search: only consider points near the last
+            # known index.  This prevents the global nearest-point search from
+            # snapping to the symmetric point on the opposite side of the loop.
+            best_i = self._cl_last_idx
+            best_d2 = float("inf")
+            W = 80  # generous arc-window (points), covers one lap with margin
+            for k in range(-W, W + 1):
+                i = (self._cl_last_idx + k) % n
+                dx = self._cl_xy[i][0] - px
+                dy = self._cl_xy[i][1] - py
+                d2 = dx * dx + dy * dy
+                if d2 < best_d2:
+                    best_d2, best_i = d2, i
+            s = self._cl_arc[best_i] if best_i < len(self._cl_arc) else 0.0
+            # Count laps from the *signed* forward progress of the centreline
+            # index.  The raw s wraps at the seam, so a one-frame nearest-point
+            # flicker there read as a backward wrap and cancelled the lap
+            # increment.  The modulo delta below is remapped to a signed step,
+            # so crossing the seam reads as a small forward step, never a
+            # spurious backwards one.
+            ds = (best_i - self._cl_last_idx) % n
+            if ds > n / 2:
+                ds -= n
+            if not hasattr(self, "_lap_idx_progress"):
+                self._lap_idx_progress = 0
+            self._lap_idx_progress += ds
+            self._lap_count = self._lap_idx_progress // n
+        else:
+            # Open track: global nearest-point search is robust and correct.
+            best_i = 0
+            best_d2 = float("inf")
+            for i in range(n):
+                dx = self._cl_xy[i][0] - px
+                dy = self._cl_xy[i][1] - py
+                d2 = dx * dx + dy * dy
+                if d2 < best_d2:
+                    best_d2, best_i = d2, i
+            s = self._cl_arc[best_i] if best_i < len(self._cl_arc) else 0.0
+        self._cl_last_idx = best_i
+        self._cl_last_s = s
+        self._cl_s = s
+
+    def _update_finish_arm(self) -> None:
+        """Decide whether the graceful finish deceleration is active."""
+        if self._finish_mode == "none":
+            self._finish_armed = False
+            return
+        if self._finish_mode == "time":
+            now = self.get_clock().now()
+            # Simulation clock reset (re-run / seek) → re-baseline.
+            if self._finish_t0_set and now < self._finish_t0:
+                self._finish_t0 = now
+                self._lap_count = 0
+            if not self._finish_t0_set:
+                self._finish_t0 = now
+                self._finish_t0_set = True
+            self._finish_armed = True
+            return
+        if self._finish_mode == "line":
+            # Cap is inherently safe: it only binds after the finish line.
+            self._finish_armed = True
+            return
+        if self._finish_mode == "circle":
+            self._finish_armed = self._lap_count >= self._finish_target_lap
+            return
+
+    def _finish_speed_cap(self) -> float:
+        """Max speed allowed so the vehicle stops exactly at the stop target.
+
+        Space modes anchor at stop_s = finish_s + runout. Braking begins the
+        instant the stopping distance v^2/(2a) reaches (dist to finish)+runout.
+        Time mode anchors at the deadline instead.
+        """
+        if self._finish_mode == "none":
+            return float("inf")
+        a = self._finish_decel
+        if self._finish_mode == "time":
+            if not self._finish_t0_set:
+                return float("inf")
+            remaining = self._finish_time_limit - (
+                self.get_clock().now() - self._finish_t0).nanoseconds / 1e9
+            return max(0.0, a * remaining)
+        if not self._finish_armed:
+            return float("inf")
+        if not self._cl_xy:  # centreline not received yet → don't brake
+            return float("inf")
+        if self._cl_loop:
+            L = self._cl_length
+            # On a loop, use the *shortest* cyclic distance to the stop target.
+            # The raw modulo (stop_s - cl_s) % L flips to ~L once the vehicle
+            # passes stop_s, which would let the car re-accelerate to full speed
+            # instead of stopping.  min(d, L-d) keeps the cap engaged on BOTH
+            # sides of the stop target, so the car actually halts at stop_s.
+            d = (self._stop_s - self._cl_s) % L
+            if d < 0:
+                d += L
+            dist = min(d, L - d)
+        else:
+            dist = self._stop_s - self._cl_s
+        if dist <= 0.0:
+            return 0.0
+        brake_cap = math.sqrt(2.0 * a * dist)
+        # "Known finish line" profile: the finish position is fixed and known
+        # from the centreline (a lookup table), so once the vehicle has crossed
+        # the finish line (cl_s >= finish_s) we glide down from cruise speed to
+        # 0 across the whole runout.  This makes the deceleration *visible and
+        # smooth* (starting right at the red line) instead of a late, hard slam
+        # only a few metres before stop_s.  The physics brake_cap is kept as a
+        # safety floor so we can always stop in time even if the profile is too
+        # aggressive for the current grip.
+        if self._cl_s >= self._finish_s:
+            runout = max(1e-3, self._stop_s - self._finish_s)
+            profile = self._speed_cfg.max_speed * max(
+                0.0, (self._stop_s - self._cl_s) / runout)
+            return min(brake_cap, profile)
+        return min(self._speed_cfg.max_speed, brake_cap)
+
+    def _maybe_publish_finished(self) -> None:
+        """Publish FINISHED once the vehicle has stopped at the target.
+
+        After FINISHED the caller holds the vehicle at zero speed, so an
+        overshoot on the loop (modulo distance flips large) cannot re-accelerate
+        it, and an early stop in time mode is latched instead of re-launched.
+        """
+        if self._finished or not self._has_moved:
+            return
+        if self._finish_mode == "time":
+            remaining = self._finish_time_limit - (
+                self.get_clock().now() - self._finish_t0).nanoseconds / 1e9
+            reached = remaining <= 0.0 or self._current_speed < 0.1
+        else:
+            if self._cl_loop:
+                d = (self._stop_s - self._cl_s) % self._cl_length
+                reached = min(d, self._cl_length - d) <= 0.5
+            else:
+                reached = abs(self._stop_s - self._cl_s) <= 0.5
+        if reached and self._current_speed < 0.1:
+            self._finished = True
+            self._finish_pub.publish(String(data="FINISHED"))
+            self.get_logger().info("Finish reached: vehicle stopped.")
 
 
 def _projected_index(path, arc_lengths, position, last_idx=0, lookahead_s=0.8) -> int:

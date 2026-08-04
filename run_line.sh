@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Keep nounset disabled while sourcing ROS 2 Humble environment hooks.
+# Straight-track test: 100 m dirt road (hills + speed bumps) plus a 20 m
+# plain stopping runout. Uses finish_mode=line so the vehicle decelerates
+# after crossing the finish line and stops within the 20 m zone.
 set -eo pipefail
 
 SEED=42
@@ -7,7 +9,7 @@ OBSTACLES=5
 USE_RVIZ=true
 USE_GZ_GUI=true
 USE_VIDEO=true
-FINISH_MODE="none"
+FINISH_MODE="line"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seed) SEED="$2"; shift 2 ;;
@@ -28,10 +30,10 @@ if [[ ! -f "$SCRIPT_DIR/install/setup.bash" ]]; then
 fi
 source "$SCRIPT_DIR/install/setup.bash"
 
-export GZ_PARTITION="baja_${USER//[^a-zA-Z0-9_]/_}_$SEED"
+export GZ_PARTITION="baja_line_${USER//[^a-zA-Z0-9_]/_}_$SEED"
 export GZ_SIM_RESOURCE_PATH="$SCRIPT_DIR/install/baja_cloud_sim/share/baja_cloud_sim:${GZ_SIM_RESOURCE_PATH:-}"
-GENERATED="$SCRIPT_DIR/runtime/scenario_$SEED"
-RESULTS="$SCRIPT_DIR/results/seed_$SEED"
+GENERATED="$SCRIPT_DIR/runtime/scenario_line_$SEED"
+RESULTS="$SCRIPT_DIR/results/line_seed_$SEED"
 mkdir -p "$GENERATED" "$RESULTS"
 RUN_TAG="$(date +%Y%m%d_%H%M%S)"
 VIDEO_PATH="$RESULTS/gazebo_${RUN_TAG}.mp4"
@@ -41,10 +43,10 @@ if [[ "$USE_VIDEO" == "true" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
   exit 1
 fi
 
-ros2 run baja_cloud_sim generate_loop_scenario --output "$GENERATED" --seed "$SEED" --obstacles "$OBSTACLES"
+ros2 run baja_cloud_sim generate_scenario --output "$GENERATED" --seed "$SEED" --obstacles "$OBSTACLES" --runout_m 20
 ros2 launch baja_cloud_sim simulation.launch.py \
-  world_file:="$GENERATED/baja_loop.sdf" \
-  scenario_file:="$GENERATED/loop_scenario.json" \
+  world_file:="$GENERATED/baja_100m.sdf" \
+  scenario_file:="$GENERATED/scenario.json" \
   results_dir:="$RESULTS" \
   finish_mode:="$FINISH_MODE" \
   use_rviz:="$USE_RVIZ" \

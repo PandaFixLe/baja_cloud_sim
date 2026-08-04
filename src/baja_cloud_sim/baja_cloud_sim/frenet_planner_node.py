@@ -124,14 +124,50 @@ class FrenetPlannerNode(Node):
         closest = min(boundary, key=lambda point: (point[0] - reference["x"]) ** 2 + (point[1] - reference["y"]) ** 2)
         return signed_lateral(closest, reference)
 
+    def _nearest_wrap(self, last: int) -> int:
+        """Wrap-aware nearest centreline index (follows the car around a loop).
+
+        Searches the *entire* loop for the geometrically nearest centreline
+        point.  A small forward-biased window (e.g. -6..+70) let the index
+        drift steadily *ahead* of the vehicle: each frame it would pick a
+        point slightly further forward, and after the seam the published
+        ``/planned_path`` would stretch from the car all the way back to the
+        stale index — the long, infinitely-extended line seen in circle mode.
+        Locking onto the true nearest point keeps the path anchored to the
+        vehicle at every frame.
+        """
+        n = len(self.centerline)
+        if n == 0:
+            return 0
+        best_i = last % n
+        best_d2 = float("inf")
+        for k in range(n):
+            i = (last + k) % n
+            dx = self.centerline[i]["x"] - self.position[0]
+            dy = self.centerline[i]["y"] - self.position[1]
+            d2 = dx * dx + dy * dy
+            if d2 < best_d2:
+                best_d2, best_i = d2, i
+        return best_i
+
     def _plan(self) -> None:
         if self.position is None or len(self.centerline) < 3 or not self.left_world or not self.right_world:
             return
-        self.last_nearest = nearest_index(self.centerline, self.position[0], self.position[1], max(0, self.last_nearest - 4))
+        n = len(self.centerline)
+        loop = math.hypot(self.centerline[0]["x"] - self.centerline[-1]["x"],
+                          self.centerline[0]["y"] - self.centerline[-1]["y"]) < 3.0
+        if loop:
+            self.last_nearest = self._nearest_wrap(self.last_nearest)
+        else:
+            self.last_nearest = nearest_index(self.centerline, self.position[0], self.position[1], max(0, self.last_nearest - 4))
         left_limits = [point["half_width"] for point in self.centerline]
         right_limits = [-point["half_width"] for point in self.centerline]
-        horizon_end = min(len(self.centerline), self.last_nearest + int(self.config.horizon_m / 0.5) + 8)
-        for index in range(self.last_nearest, horizon_end):
+        horizon_samples = int(self.config.horizon_m / 0.5) + 8
+        if loop:
+            idx_window = [(self.last_nearest + k) % n for k in range(horizon_samples)]
+        else:
+            idx_window = list(range(self.last_nearest, min(n, self.last_nearest + horizon_samples)))
+        for index in idx_window:
             # Compute left/right limits independently — ns labels guarantee
             # which boundary is which, no max/min cross-mixing needed.
             left = self._closest_lateral(self.centerline[index], self.left_world)
@@ -143,6 +179,7 @@ class FrenetPlannerNode(Node):
         result = plan_frenet_path(
             self.centerline, self.last_nearest, self.position,
             left_limits, right_limits, self.obstacles, self.config,
+            closed_loop=loop,
         )
         self.status_pub.publish(String(data="FEASIBLE" if result.feasible else f"INFEASIBLE: {result.reason}"))
         self.plan_time_pub.publish(Float32(data=float(result.planning_ms)))

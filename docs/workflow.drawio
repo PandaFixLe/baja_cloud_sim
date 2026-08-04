@@ -1,0 +1,70 @@
+<mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1250" math="0" shadow="0">
+  <root>
+    <mxCell id="0" />
+    <mxCell id="1" parent="0" />
+
+    <!-- 标题 -->
+    <mxCell id="title" value="BAJA Cloud Sim — 自动驾驶工作流 (GPS/IMU 定位 → 规划 → 控制(横/纵向) → 输出)" style="text;html=1;align=center;verticalAlign=middle;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="240" y="20" width="880" height="40" as="geometry" />
+    </mxCell>
+
+    <!-- Gazebo 世界 -->
+    <mxCell id="gazebo" value="Gazebo 仿真世界&#10;(车辆物理模型 + 赛道 SDF)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="40" y="210" width="170" height="70" as="geometry" />
+    </mxCell>
+
+    <!-- 桥接 -->
+    <mxCell id="bridge" value="ros_gz_bridge&#10;(config/bridge.yaml)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
+      <mxGeometry x="40" y="350" width="170" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- ① truth_perception -->
+    <mxCell id="truth" value="① truth_perception_node&#10;定位 + 几何感知&#10;&lt;b&gt;作用&lt;/b&gt;: 读 Gazebo 真值位姿, 注入厘米级噪声模拟 GPS/IMU; 广播参考中心线 / 车道边界 / 障碍物" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;verticalAlign=top;align=left;spacingLeft=6;" vertex="1" parent="1">
+      <mxGeometry x="280" y="170" width="240" height="150" as="geometry" />
+    </mxCell>
+
+    <!-- ② frenet_planner -->
+    <mxCell id="planner" value="② frenet_planner_node&#10;Frenet 栅格局部规划器&#10;&lt;b&gt;作用&lt;/b&gt;: 消费中心线/边界/障碍/自车位姿, 求解带避障与中心线权重的最优路径 (core/planner.py)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;verticalAlign=top;align=left;spacingLeft=6;" vertex="1" parent="1">
+      <mxGeometry x="610" y="170" width="240" height="150" as="geometry" />
+    </mxCell>
+
+    <!-- ③ path_follower -->
+    <mxCell id="follower" value="③ path_follower_node&#10;路径跟踪控制器 (20Hz)&#10;&lt;b&gt;作用&lt;/b&gt;: 综合规划路径+定位+感知, 分横向/纵向控制输出阿克曼指令" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;verticalAlign=top;align=left;spacingLeft=6;" vertex="1" parent="1">
+      <mxGeometry x="940" y="150" width="250" height="140" as="geometry" />
+    </mxCell>
+
+    <!-- 横向子块 -->
+    <mxCell id="lateral" value="横向控制&#10;LQR / 纯跟踪&#10;→ steering_angle" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="950" y="320" width="110" height="60" as="geometry" />
+    </mxCell>
+    <!-- 纵向子块 -->
+    <mxCell id="longitudinal" value="纵向控制&#10;级联PID+坡度补偿&#10;→ speed / 油门" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+      <mxGeometry x="1080" y="320" width="110" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- ④ actuator_adapter -->
+    <mxCell id="actuator" value="④ actuator_adapter_node&#10;执行器适配&#10;&lt;b&gt;作用&lt;/b&gt;: 将 Ackermann 指令按自行车模型转为 Gazebo 可消费的 Twist (带加减速/jerk 平滑)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;verticalAlign=top;align=left;spacingLeft=6;" vertex="1" parent="1">
+      <mxGeometry x="1280" y="170" width="240" height="150" as="geometry" />
+    </mxCell>
+
+    <!-- evaluator (辅助) -->
+    <mxCell id="evaluator" value="evaluator_node (辅助)&#10;记录闭环指标→CSV, 回放实际轨迹" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=11;dashed=1;" vertex="1" parent="1">
+      <mxGeometry x="610" y="560" width="240" height="60" as="geometry" />
+    </mxCell>
+
+    <!-- 连接线 -->
+    <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="gazebo" target="bridge"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e2" value="/ground_truth/odom&#10;(nav_msgs/Odometry)" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" edge="1" parent="1" source="bridge" target="truth"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e3" value="/gps/fix, /imu/yaw, /reference_centerline,&#10;/road_boundary_markers, /obstacle_markers" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" edge="1" parent="1" source="truth" target="planner"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e4" value="/planned_path (nav_msgs/Path)&#10;/planner/status (std_msgs/String)" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" edge="1" parent="1" source="planner" target="follower"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e5" value="/gps/fix, /imu/yaw,&#10;/reference_centerline, /obstacle_markers" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" edge="1" parent="1" source="truth" target="follower"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="400" y="450" /><mxPoint x="940" y="450" /></Array></mxGeometry></mxCell>
+    <mxCell id="e6" value="/ground_truth/odom&#10;(真实速度/偏航率 → LQR)" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" edge="1" parent="1" source="bridge" target="follower"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="125" y="540" /><mxPoint x="940" y="540" /></Array></mxGeometry></mxCell>
+    <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="follower" target="lateral"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="follower" target="longitudinal"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e9" value="/cmd_control&#10;(ackermann_msgs/AckermannDriveStamped:&#10; .speed + .steering_angle)" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" edge="1" parent="1" source="lateral" target="actuator"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;" edge="1" parent="1" source="longitudinal" target="actuator"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e11" value="/model/baja_vehicle/cmd_vel&#10;(geometry_msgs/Twist → Gazebo)" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=10;" edge="1" parent="1" source="actuator" target="bridge"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1400" y="540" /><mxPoint x="125" y="540" /></Array></mxGeometry></mxCell>
+    <mxCell id="e12" value="/planned_path, /cmd_control, /metrics/*" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;dashed=1;" edge="1" parent="1" source="planner" target="evaluator"><mxGeometry relative="1" as="geometry" /></mxCell>
+    <mxCell id="e13" value="实际轨迹/状态" style="edgeStyle=orthogonalEdgeStyle;html=1;fontSize=9;dashed=1;" edge="1" parent="1" source="follower" target="evaluator"><mxGeometry relative="1" as="geometry" /></mxCell>
+  </root>
+</mxGraphModel>
