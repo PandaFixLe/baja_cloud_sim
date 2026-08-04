@@ -18,16 +18,25 @@ class ActuatorAdapterNode(Node):
         super().__init__("actuator_adapter_node")
         self.declare_parameter("wheelbase", 1.43)
         self.declare_parameter("command_timeout", 0.35)
+        # Platform-specific topic remaps (phase 0 of real-car port):
+        # in simulation this points at the Gazebo vehicle; on the Orin real car
+        # it points at the chassis driver (e.g. /chassis/cmd).
+        self.declare_parameter("cmd_vel_topic", "/model/baja_vehicle/cmd_vel")
+        # Input odometry used only to echo vehicle status. In simulation this is
+        # the Gazebo ground-truth odometry; on the real car it would be the
+        # fused localization odometry instead.
+        self.declare_parameter("odom_topic", "/ground_truth/odom")
         self.wheelbase = float(self.get_parameter("wheelbase").value)
         self.timeout = float(self.get_parameter("command_timeout").value)
         self.last_command = None
         self.last_stamp = None
         self._current_speed = 0.0
         self._prev_accel = 0.0
-        self.command_pub = self.create_publisher(Twist, "/model/baja_vehicle/cmd_vel", 10)
+        self.command_pub = self.create_publisher(
+            Twist, self.get_parameter("cmd_vel_topic").value, 10)
         self.status_pub = self.create_publisher(AckermannDriveStamped, "/vehicle_status", 10)
         self.create_subscription(AckermannDriveStamped, "/cmd_control", self._command_callback, 20)
-        self.create_subscription(Odometry, "/ground_truth/odom", self._odom_callback, 20)
+        self.create_subscription(Odometry, self.get_parameter("odom_topic").value, self._odom_callback, 20)
         self.create_timer(0.05, self._publish)
 
     def _command_callback(self, message: AckermannDriveStamped) -> None:

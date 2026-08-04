@@ -35,6 +35,10 @@ class TruthPerceptionNode(Node):
         self.declare_parameter("localization_position_stddev_m", 0.015)
         self.declare_parameter("localization_altitude_stddev_m", 0.020)
         self.declare_parameter("localization_yaw_stddev_deg", 0.12)
+        # Phase-0 platform remap: simulation reads Gazebo ground-truth odometry.
+        # On the real car this node is replaced by a real localization node, so
+        # this parameter is only relevant in simulation.
+        self.declare_parameter("ground_truth_odom_topic", "/ground_truth/odom")
         scenario_file = self.get_parameter("scenario_file").get_parameter_value().string_value
         if not scenario_file:
             raise RuntimeError("scenario_file parameter is required")
@@ -61,7 +65,7 @@ class TruthPerceptionNode(Node):
         self.obstacle_pub = self.create_publisher(MarkerArray, "/obstacle_markers", 10)
         self.boundary_pub = self.create_publisher(MarkerArray, "/road_boundary_markers", 10)
         self.centerline_pub = self.create_publisher(PathMessage, "/reference_centerline", latched)
-        self.create_subscription(Odometry, "/ground_truth/odom", self._odom_callback, 20)
+        self.create_subscription(Odometry, self.get_parameter("ground_truth_odom_topic").value, self._odom_callback, 20)
         self.create_timer(0.05, self._publish_truth)
         self.create_timer(1.0, self._publish_centerline)
         self._publish_centerline()

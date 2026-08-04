@@ -6,6 +6,9 @@ truth_perception_node:
     localization_position_stddev_m: 0.015
     localization_altitude_stddev_m: 0.020
     localization_yaw_stddev_deg: 0.12
+    # Phase-0 platform remap: simulation reads Gazebo ground-truth odometry.
+    # On the real car this node is replaced by a real localization node.
+    ground_truth_odom_topic: "/ground_truth/odom"
 
 frenet_planner_node:
   ros__parameters:
@@ -63,6 +66,10 @@ actuator_adapter_node:
     use_sim_time: true
     wheelbase: 1.43
     command_timeout: 0.35
+    # Phase-0 platform remaps (real-car port):
+    # simulation → Gazebo vehicle; real car → chassis driver topic.
+    cmd_vel_topic: "/model/baja_vehicle/cmd_vel"
+    odom_topic: "/ground_truth/odom"
 
 evaluator_node:
   ros__parameters:
