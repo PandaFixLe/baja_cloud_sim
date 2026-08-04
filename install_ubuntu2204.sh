@@ -25,9 +25,19 @@ fi
 
 if ! grep -Rqs --include='*.list' --include='*.sources' \
   'packages\.osrfoundation\.org/gazebo/ubuntu-stable' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
-  sudo curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
-    -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] https://packages.osrfoundation.org/gazebo/ubuntu-stable $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" \
+  # Prefer the Tsinghua mirror for both the key and the apt source (the upstream
+  # OSRF host is often unreachable on networks in China). Fall back to upstream.
+  if sudo curl -sSL --max-time 30 https://mirrors.tuna.tsinghua.edu.cn/osrf/ubuntu-stable \
+       -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg 2>/dev/null \
+     && [ -s /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg ]; then
+    GAZEBO_DEB="https://mirrors.tuna.tsinghua.edu.cn/osrf/ubuntu-stable"
+    echo "Using Tsinghua OSRF mirror for Gazebo."
+  else
+    sudo curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
+      -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+    GAZEBO_DEB="https://packages.osrfoundation.org/gazebo/ubuntu-stable"
+  fi
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] ${GAZEBO_DEB} $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" \
     | sudo tee /etc/apt/sources.list.d/gazebo-stable.list >/dev/null
 else
   echo "Existing Gazebo apt source detected; leaving it unchanged."
@@ -48,10 +58,18 @@ sudo apt-get install -y \
 # Optional remote desktop components used by start_remote_rviz.sh.
 sudo apt-get install -y xvfb x11vnc fluxbox novnc websockify
 
-if [[ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]]; then
-  sudo rosdep init
-fi
-rosdep update
+# Configure rosdep to use the Tsinghua mirror (default GitHub source often
+# times out on networks in China). This rewrites the default sources list to
+# point at the mirror and exports ROSDISTRO_INDEX_URL so the index fetch also
+# uses the mirror. Harmless on networks where GitHub is reachable.
+ROSDEP_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/rosdistro"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/rosdep/base.yaml' > /etc/ros/rosdep/sources.list.d/20-default.list"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/rosdep/python.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/rosdep/ruby.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/rosdep/osx-homebrew.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
+sudo sh -c "echo 'yaml ${ROSDEP_MIRROR}/master/releases/fuerte.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list"
+export ROSDISTRO_INDEX_URL="${ROSDEP_MIRROR}/index-v4.yaml"
+rosdep update || rosdep update   # retry once on transient timeout
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 "$SCRIPT_DIR/build.sh"
