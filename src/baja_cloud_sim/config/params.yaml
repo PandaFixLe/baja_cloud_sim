@@ -41,7 +41,22 @@ path_follower_node:
     max_lateral_accel: 1.8                # curvature ceiling (was 2.5 default)
     terrain_slope_threshold: 0.06
     terrain_min_speed: 1.0
+    use_terrain_profile: false       # 实车对接感知后统一由 flat_ground 障碍物处理地形降速
     enable_lqr: true
+    # ── 障碍物分类控制（感知组通过 /obstacle_markers 的 ns 区分类型）──
+    # tall:         高障碍物，必须横向避让 + 按 clearance 减速
+    # flat_ground:  特殊地面(土坡/减速带)，直线通过 + 平滑降速，不横向避让
+    obstacle_classes:
+      tall:
+        lateral_avoid: true
+        desired_clearance: 1.5
+        min_speed: 1.5
+      flat_ground:
+        lateral_avoid: false
+        approach_distance: 5.0      # 提前/过后对称平滑过渡距离 (m)
+        slow_speed: 2.0             # 通过特殊地面时的目标速度 (m/s)
+        default_half_width: 0.9     # tall 默认包围盒半宽兜底 (车宽1.5*0.6)
+
     # ── Longitudinal cascaded-PID (Apollo-style) ──
     lon_kp: 2.0
     lon_ki: 0.5

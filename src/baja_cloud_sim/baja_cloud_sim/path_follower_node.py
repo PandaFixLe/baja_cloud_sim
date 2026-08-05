@@ -138,11 +138,25 @@ class PathFollowerNode(Node):
         self._speed_cfg = SpeedProfileConfig(
             min_speed_obstacle=float(self.get_parameter("min_speed_obstacle").value),
         )
-        # terrain-aware speed derating
+        # terrain-aware speed derating (disabled by default post perception-port;
+        # special terrain is handled via flat_ground obstacle class instead)
         self.declare_parameter("terrain_slope_threshold", 0.06)
         self._terrain_slope_threshold = float(self.get_parameter("terrain_slope_threshold").value)
         self.declare_parameter("terrain_min_speed", 1.0)
         self._terrain_min_speed = float(self.get_parameter("terrain_min_speed").value)
+        self.declare_parameter("use_terrain_profile", False)
+        self._use_terrain_profile = bool(self.get_parameter("use_terrain_profile").value)
+        # obstacle classification (ns="tall" / ns="flat_ground")
+        self.declare_parameter("obstacle_classes.tall.desired_clearance", 1.5)
+        self.declare_parameter("obstacle_classes.tall.min_speed", 1.5)
+        self.declare_parameter("obstacle_classes.flat_ground.approach_distance", 5.0)
+        self.declare_parameter("obstacle_classes.flat_ground.slow_speed", 2.0)
+        self.declare_parameter("obstacle_classes.flat_ground.default_half_width", 0.9)
+        self._tall_clearance = float(self.get_parameter("obstacle_classes.tall.desired_clearance").value)
+        self._tall_min_speed = float(self.get_parameter("obstacle_classes.tall.min_speed").value)
+        self._flat_approach = float(self.get_parameter("obstacle_classes.flat_ground.approach_distance").value)
+        self._flat_slow = float(self.get_parameter("obstacle_classes.flat_ground.slow_speed").value)
+        self._flat_half_width = float(self.get_parameter("obstacle_classes.flat_ground.default_half_width").value)
         self._centerline_pts: list = []  # [(x,y,z), ...] for nearest-neighbour lookup
 
         # s-projection reference (replaces Euclidean nearest-neighbour)
@@ -240,7 +254,8 @@ class PathFollowerNode(Node):
                               durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(PathMessage, "/reference_centerline",
                                  self._centerline_callback, _latched)
-        self._obstacles: list = []  # world-frame obstacle dicts
+        self._obstacles: list = []  # world-frame obstacle dicts (ns="tall")
+        self._ground_anomalies: list = []  # base_link segments (ns="flat_ground")
         self.create_timer(0.05, self._control)
         mode = "LQI 5x5" if (self._enable_lqr and len(self._lqr_cfg.Q) == 5) else \
                "LQR 4x4" if self._enable_lqr else "Pure Pursuit"
@@ -273,25 +288,44 @@ class PathFollowerNode(Node):
         self._current_speed = math.hypot(vx_b, vy_b)
 
     def _obstacle_callback(self, message: MarkerArray) -> None:
-        """Store obstacles in world frame (convert from base_link)."""
+        """Split obstacles by class (ns) into lateral-avoiding vs ground-derating.
+
+        - "tall":        high obstacle → world-frame obstacle for clearance (lateral avoid)
+        - "flat_ground": special terrain (bump/speed bump) → relative-frame segment for
+                         longitudinal smoothing only (no lateral avoidance)
+        Markers with any other / missing ns are ignored.
+        """
         if self.position is None:
             return
         obstacles = []
+        ground = []
         for marker in message.markers:
-            x, y = base_to_world(
-                (marker.pose.position.x, marker.pose.position.y),
-                self.position, self.yaw_world,
-            )
-            q = marker.pose.orientation
-            relative_yaw = quaternion_to_yaw(q.x, q.y, q.z, q.w)
-            obstacles.append({
-                "id": marker.id,
-                "x": x, "y": y,
-                "yaw": wrap_angle(self.yaw_world + relative_yaw),
-                "length": marker.scale.x,
-                "width": marker.scale.y,
-                "height": marker.scale.z,
-            })
+            cls = marker.ns
+            if cls == "tall":
+                x, y = base_to_world(
+                    (marker.pose.position.x, marker.pose.position.y),
+                    self.position, self.yaw_world,
+                )
+                q = marker.pose.orientation
+                relative_yaw = quaternion_to_yaw(q.x, q.y, q.z, q.w)
+                obstacles.append({
+                    "id": marker.id,
+                    "x": x, "y": y,
+                    "yaw": wrap_angle(self.yaw_world + relative_yaw),
+                    "length": marker.scale.x,
+                    "width": marker.scale.y,
+                    "height": marker.scale.z,
+                })
+            elif cls == "flat_ground":
+                # store in base_link frame (relative to vehicle) for derating math
+                ground.append({
+                    "id": marker.id,
+                    "x": float(marker.pose.position.x),
+                    "y": float(marker.pose.position.y),
+                    "length": float(marker.scale.x),   # forward extent of the terrain patch
+                })
+        self._obstacles = obstacles
+        self._ground_anomalies = ground
         self._obstacles = obstacles
 
     def _centerline_callback(self, message: PathMessage) -> None:
@@ -463,7 +497,8 @@ class PathFollowerNode(Node):
             path, arc, self._speed_profile, self._speed_cfg,
             self._obstacles, self._desired_clearance,
             self._centerline_pts,
-            self._terrain_slope_threshold, self._terrain_min_speed,
+            self._terrain_slope_threshold if self._use_terrain_profile else -1.0,
+            self._terrain_min_speed,
         )
         self._path_arc_lengths = arc
 
@@ -655,6 +690,13 @@ class PathFollowerNode(Node):
             else:
                 v_ref = min(v_ref, self._finish_speed_cap())
             self._maybe_publish_finished()
+
+        # ── flat_ground (special terrain) longitudinal derating ──
+        # Straight-line pass-through with smooth speed reduction; no lateral
+        # avoidance (handled separately from tall-obstacle clearance above).
+        if self._ground_anomalies:
+            v_ground = self._ground_derate(self._current_speed)
+            v_ref = min(v_ref, v_ground)
 
         # Speed-loop PID → desired acceleration
         e_v = v_ref - self._current_speed
@@ -1071,6 +1113,42 @@ def _derate_speed_profile(
         derated[i] = min(derated[i], v_limit)
 
     return derated
+
+
+def _ground_derate(self, current_speed: float) -> float:
+    """Longitudinal derating for flat_ground (special terrain) anomalies.
+
+    Anomalies are base_link segments {x: centre (forward +), length: forward
+    extent}. The vehicle (x=0) should slow to `slow_speed` while the segment
+    overlaps the vehicle, and recover smoothly over `approach_distance` after
+    the segment's end passes behind the vehicle (x_end < 0).
+
+    Picks the *nearest* anomaly (smallest x_start) — tracks are assumed to
+    contain at most one special-terrain patch at a time. Result is clamped to
+    idle_speed so the vehicle never stalls to a halt on flat ground.
+    """
+    if not self._ground_anomalies:
+        return float("inf")
+    # nearest anomaly ahead of (or overlapping) the vehicle
+    cand = [g for g in self._ground_anomalies if g["x"] > -g["length"]]
+    if not cand:
+        return float("inf")
+    g = min(cand, key=lambda a: a["x"])
+    x_start = g["x"] - g["length"] / 2.0
+    x_end = g["x"] + g["length"] / 2.0
+    approach = max(0.5, self._flat_approach)
+
+    if x_end < 0.0:
+        # fully behind the vehicle → recovering
+        dist_past = -x_end
+        ramp = min(1.0, dist_past / approach)
+        return max(self.idle_speed, self._flat_slow + ramp * (current_speed - self._flat_slow))
+    if x_start <= 0.0:
+        # overlapping the vehicle now → hold slow speed
+        return max(self.idle_speed, self._flat_slow)
+    # ahead → smooth ramp-down as it approaches
+    ramp = min(1.0, (x_start) / approach)
+    return max(self.idle_speed, self._flat_slow + (1.0 - ramp) * (current_speed - self._flat_slow))
 
 
 def main(args=None) -> None:

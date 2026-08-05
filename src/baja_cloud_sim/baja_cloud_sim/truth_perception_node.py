@@ -210,7 +210,10 @@ class TruthPerceptionNode(Node):
             marker = Marker()
             marker.header.frame_id = "base_link"
             marker.header.stamp = now
-            marker.ns = "truth_obstacles"
+            # Simulated obstacles are treated as "tall" (lateral-avoiding) so
+            # the perception-port classification logic is exercised identically
+            # to the real-car path.
+            marker.ns = "tall"
             marker.id = int(obstacle["id"])
             marker.type = Marker.CUBE
             marker.action = Marker.ADD

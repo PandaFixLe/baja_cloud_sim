@@ -107,6 +107,12 @@ class FrenetPlannerNode(Node):
             return
         obstacles = []
         for marker in message.markers:
+            # Only "tall" obstacles participate in the Frenet lateral corridor.
+            # "flat_ground" (special terrain) is handled by path_follower's
+            # longitudinal derating and must NOT trigger lateral avoidance.
+            # Markers without a recognised ns are ignored (no silent default).
+            if marker.ns != "tall":
+                continue
             x, y = base_to_world((marker.pose.position.x, marker.pose.position.y), self.position, self.yaw_world)
             q = marker.pose.orientation
             relative_yaw = quaternion_to_yaw(q.x, q.y, q.z, q.w)
