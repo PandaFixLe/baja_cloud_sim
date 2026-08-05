@@ -10,6 +10,11 @@
 #     2) 对可自动处理的部分（Python 包版本、ROS/rosdep 源）自动对齐；
 #     3) 对不可自动处理的部分（OS 版本、内核、Gazebo 库版本）明确告警。
 #
+# 额外能力（v2 优化）：
+#   4) 构建前自检：修复曾用 sudo 构建导致的 root 所有物权限问题；
+#   5) 确保 build.sh 已跳过 ament_python，避免 rosdep 解析报错；
+#   6) 使用 rosdistro index-v4 镜像，规避 release-name must be a dictionary。
+#
 # 注意：
 #   本脚本只负责「对齐已存在环境」，不重复安装 apt 系统级依赖。
 #   干净的 Ubuntu 22.04 请先跑 `sudo bash install_ubuntu2204.sh`（会装齐
@@ -21,6 +26,11 @@
 #   pull 即可拿到最新对齐基准。
 # =============================================================================
 set -euo pipefail
+
+# 目标用户：若以 sudo 调用，则把产物归还给真正的使用者，而非 root
+TARGET_USER="${SUDO_USER:-$(whoami)}"
+TARGET_UID="${SUDO_UID:-$(id -u)}"
+TARGET_GID="${SUDO_GID:-$(id -g)}"
 
 # -----------------------------------------------------------------------------
 # CONFIG — 发布者环境指纹（PandaFixLe，最后更新于 2026-08-05）
@@ -62,6 +72,9 @@ PUBLISHER_GIT_VERSION="2.34.1"
 # ROS apt 源与 rosdep 镜像（国内网络可用，干净环境也能跑）
 PUBLISHER_ROS_APT_REPO="http://packages.ros.org/ros2/ubuntu"
 PUBLISHER_ROSDEP_MIRROR="https://mirrors.tuna.tsinghua.edu.cn/rosdistro"
+# 注意：必须用 index-v4.yaml，旧版 index.yaml 会触发
+# "release-name must be a dictionary" 报错。
+PUBLISHER_ROSDISTRO_INDEX_URL="${PUBLISHER_ROSDEP_MIRROR}/index-v4.yaml"
 
 # -----------------------------------------------------------------------------
 # 工具函数
@@ -150,10 +163,10 @@ cprintln "==> 校验 Python / 工具链版本"
 CUR_PY="$(python3 --version 2>&1 | awk '{print $2}')"
 [[ "$CUR_PY" == "$PUBLISHER_PYTHON_VERSION" ]] && ok "Python $CUR_PY" || warn "Python 版本不一致：当前 $CUR_PY，发布者 $PUBLISHER_PYTHON_VERSION"
 
-CUR_GCC="$(gcc --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+CUR_GCC="$(gcc --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [[ "$CUR_GCC" == "$PUBLISHER_GCC_VERSION" ]] && ok "gcc $CUR_GCC" || warn "gcc 版本不一致：当前 $CUR_GCC，发布者 $PUBLISHER_GCC_VERSION"
 
-CUR_CMAKE="$(cmake --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+CUR_CMAKE="$(cmake --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [[ "$CUR_CMAKE" == "$PUBLISHER_CMAKE_VERSION" ]] && ok "cmake $CUR_CMAKE" || warn "cmake 版本不一致：当前 $CUR_CMAKE，发布者 $PUBLISHER_CMAKE_VERSION"
 
 # -----------------------------------------------------------------------------
@@ -190,12 +203,45 @@ fi
 if [[ -f /etc/ros/rosdep/sources.list.d/20-default.list ]] && \
    grep -qs "$PUBLISHER_ROSDEP_MIRROR" /etc/ros/rosdep/sources.list.d/20-default.list; then
   ok "rosdep 已使用镜像 $PUBLISHER_ROSDEP_MIRROR"
+elif [[ -f "$HOME/.ros/sources.list.d/20-default.list" ]] && \
+     grep -qs "$PUBLISHER_ROSDEP_MIRROR" "$HOME/.ros/sources.list.d/20-default.list"; then
+  ok "rosdep 已使用用户级镜像 $PUBLISHER_ROSDEP_MIRROR"
 else
   warn "rosdep 未使用发布者镜像 $PUBLISHER_ROSDEP_MIRROR，依赖解析可能不稳定或超时。"
-  warn "对齐命令："
+  warn "对齐命令（写到 /etc/ros，需 sudo）："
   warn "  sudo sh -c \"echo 'yaml ${PUBLISHER_ROSDEP_MIRROR}/rosdep/base.yaml' > /etc/ros/rosdep/sources.list.d/20-default.list\""
   warn "  sudo sh -c \"echo 'yaml ${PUBLISHER_ROSDEP_MIRROR}/rosdep/python.yaml' >> /etc/ros/rosdep/sources.list.d/20-default.list\""
-  warn "  export ROSDISTRO_INDEX_URL=${PUBLISHER_ROSDEP_MIRROR}/index.yaml && rosdep update || true"
+  warn "  export ROSDISTRO_INDEX_URL=${PUBLISHER_ROSDISTRO_INDEX_URL} && sudo rosdep update || true"
+fi
+
+# -----------------------------------------------------------------------------
+# 5.5 构建前准备：权限自愈 + build.sh 就绪检查（防止 build 报权限/rosdep 错误）
+# -----------------------------------------------------------------------------
+cprintln "==> 构建前准备（权限自愈 / build.sh 校验）"
+
+# 5.5.1 修复曾用 sudo 构建导致的 root 所有物（否则 build 时删不掉 egg-info）
+for d in build install log; do
+  if [ -d "$d" ] && [ -n "$(find "$d" -user root -print -quit 2>/dev/null)" ]; then
+    warn "$d 中存在 root 所有的文件，构建时会因权限不足失败；正在归还给 $TARGET_USER…"
+    sudo chown -R "$TARGET_UID:$TARGET_GID" "$d" \
+      && ok "$d 已归还给 $TARGET_USER" \
+      || warn "chown $d 失败，请手动执行：sudo chown -R $TARGET_USER:$TARGET_USER $d"
+  fi
+done
+
+# 5.5.2 确保 build.sh 跳过 ament_python（否则 rosdep 报 Cannot locate rosdep definition）
+BUILD_SH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/build.sh"
+if [ -f "$BUILD_SH" ]; then
+  if ! grep -q "ament_python" "$BUILD_SH"; then
+    warn "build.sh 的 --skip-keys 缺少 ament_python，rosdep 会报错；正在补丁…"
+    sed -i 's/--skip-keys "ros_gz_sim ros_gz_bridge"/--skip-keys "ros_gz_sim ros_gz_bridge ament_python"/' "$BUILD_SH" \
+      && ok "已为 build.sh 添加 ament_python 跳过项" \
+      || warn "补丁 build.sh 失败，请手动在 --skip-keys 中加入 ament_python"
+  else
+    ok "build.sh 已包含 ament_python 跳过项"
+  fi
+else
+  warn "未找到 build.sh，跳过构建就绪检查；请确认工作空间结构正确"
 fi
 
 # -----------------------------------------------------------------------------
@@ -203,6 +249,7 @@ fi
 # -----------------------------------------------------------------------------
 cprintln "==> 环境对齐完成"
 cprintln "若上述 FAIL/WARN 项已处理（或确认不影响你的结果），即可构建运行："
-cprintln "  ./build.sh"
-cprintln "  ./run.sh --seed 42"
+cprintln "  ./build.sh          # 注意：必须用普通用户运行，不要用 sudo"
+cprintln "  ./run.sh --seed 42  # 固定随机种子，保证结果可复现"
 cprintln "提示：目标确定性还依赖固定随机种子（run.sh --seed），请保持与发布者一致。"
+cprintln "提示：本脚本已自动修复构建产物权限并校验 build.sh，正常情况下直接 ./build.sh 即可。"
