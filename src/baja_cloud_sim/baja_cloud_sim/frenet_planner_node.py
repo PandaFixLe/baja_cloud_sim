@@ -53,6 +53,7 @@ class FrenetPlannerNode(Node):
         # chassis or ground clang at startup) and ignored — the planner cannot
         # avoid something it is already on top of, and these produce phantom
         # inflated boxes near the spawn point.
+        self.declare_parameter("min_obstacle_range", 0.5)
         self.min_obstacle_range = float(self.get_parameter("min_obstacle_range").value)
         self.centerline = []
         self.position = None
