@@ -62,7 +62,6 @@ class TruthPerceptionNode(Node):
         self.gps_pub = self.create_publisher(NavSatFix, "/gps/fix", 10)
         self.yaw_pub = self.create_publisher(Float32, "/imu/yaw", 10)
         self.localization_pub = self.create_publisher(Odometry, "/localization/odom", 10)
-        self.obstacle_pub = self.create_publisher(MarkerArray, "/obstacle_markers", 10)
         self.boundary_pub = self.create_publisher(MarkerArray, "/road_boundary_markers", 10)
         self.centerline_pub = self.create_publisher(PathMessage, "/reference_centerline", latched)
         self.create_subscription(Odometry, self.get_parameter("ground_truth_odom_topic").value, self._odom_callback, 20)
@@ -70,10 +69,10 @@ class TruthPerceptionNode(Node):
         self.create_timer(1.0, self._publish_centerline)
         self._publish_centerline()
         self.get_logger().info(
-            f"Truth perception ready: {len(self.scenario['obstacles'])} boxes, "
-            f"{len(self.scenario.get('edge_tires', []))} physical edge tires (Gazebo-only, "
-            f"not published), {len(self.scenario['centerline'])} centerline samples, "
-            f"localization sigma={self.position_stddev * 100.0:.1f} cm"
+            f"Truth perception ready: {len(self.scenario['obstacles'])} physical obstacle boxes "
+            f"and {len(self.scenario.get('edge_tires', []))} edge tires (Gazebo-only, detected by "
+            f"perception radar, not published here), {len(self.scenario['centerline'])} centerline "
+            f"samples, localization sigma={self.position_stddev * 100.0:.1f} cm"
         )
 
     def _odom_callback(self, message: Odometry) -> None:
@@ -203,40 +202,11 @@ class TruthPerceptionNode(Node):
         )
         self.boundary_pub.publish(boundary_array)
 
-        obstacle_array = MarkerArray()
-        for obstacle in self.scenario["obstacles"]:
-            local = world_to_base((obstacle["x"], obstacle["y"]), (self.pose.x, self.pose.y), self.yaw)
-            if not (-self.backward <= local[0] <= self.forward and abs(local[1]) <= 12.0):
-                continue
-            marker = Marker()
-            marker.header.frame_id = "base_link"
-            marker.header.stamp = now
-            # Simulated obstacles are treated as "tall" (lateral-avoiding) so
-            # the perception-port classification logic is exercised identically
-            # to the real-car path.
-            marker.ns = "tall"
-            marker.id = int(obstacle["id"])
-            marker.type = Marker.CUBE
-            marker.action = Marker.ADD
-            marker.pose.position.x = local[0]
-            marker.pose.position.y = local[1]
-            marker.pose.position.z = obstacle["height"] * 0.5
-            relative_yaw = wrap_angle(obstacle["yaw"] - self.yaw)
-            _, _, marker.pose.orientation.z, marker.pose.orientation.w = yaw_to_quaternion(relative_yaw)
-            marker.scale.x = obstacle["length"]
-            marker.scale.y = obstacle["width"]
-            marker.scale.z = obstacle["height"]
-            marker.color.r = 1.0
-            marker.color.g = 0.18
-            marker.color.b = 0.08
-            marker.color.a = 0.72
-            marker.lifetime.nanosec = 180_000_000
-            obstacle_array.markers.append(marker)
-        # NOTE: edge tires (standing tires along both road edges every 5 m) are
-        # physical Gazebo cylinders only — they are NOT published on
-        # /obstacle_markers. The perception group detects them directly via its
-        # own Gazebo sensors, so no ROS ground-truth for tires is needed here.
-        self.obstacle_pub.publish(obstacle_array)
+        # NOTE: obstacles (and edge tires) are NOT published on /obstacle_markers
+        # from here. The perception group's own Gazebo-mounted radar detects the
+        # physical obstacle boxes and tires directly, so no ROS ground-truth for
+        # obstacles is injected by this node. Only localization / GPS / IMU /
+        # centerline / road-boundary truth is provided.
 
 
 def main(args=None) -> None:

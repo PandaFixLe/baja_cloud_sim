@@ -181,9 +181,12 @@ Gazebo OdometryPublisher（世界真值位姿）
        │                     ├─ /gps/fix
        │                     ├─ /imu/yaw
        │                     ├─ /reference_centerline
-       │                     ├─ /road_boundary_markers
-       │                     └─ /obstacle_markers  (ns=tall | flat_ground)
+       │                     └─ /road_boundary_markers
        └─ evaluator ─────────── results/seed_N/tracking_*.csv
+
+感知组 Gazebo 雷达（实车传感器在仿真中的部署）
+  └─ /obstacle_markers  (base_link, CUBE, ns=tall | flat_ground)
+       ↑ 雷达直接检测 Gazebo 中的物理障碍盒 / 轮胎，不依赖真值注入
 
 frenet_planner (10 Hz)
   ├─ /planned_path      (nav_msgs/Path, 绿色)
@@ -406,8 +409,9 @@ path_follower_node:
 
 > **最小契约**：中心点坐标（`pose.position.x/y`）+ 类型（`ns`）+ 前向长度（`scale.x`）。
 > 宽度与高度对算法核心非必需——宽度由兜底参数处理，高度仅用于 RViz 盒子显示。
-> 仿真侧 `truth_perception` 已显式给随机障碍标 `ns="tall"`。道路边缘轮胎为纯 Gazebo
-> 物理圆柱体，**不通过 `/obstacle_markers` 发布**（感知组用自有传感器检测），
+> 仿真联调阶段，`/obstacle_markers` 由**感知组的 Gazebo 雷达**直接检测物理障碍盒
+> 后发布（标 `ns=tall` / `ns=flat_ground`），`truth_perception` **不再注入障碍真值**。
+> 道路边缘轮胎为纯 Gazebo 物理圆柱体，同样由雷达检测、不经真值发布，
 > 故 planner 的红色膨胀框只对 `tall` 障碍绘制、不会被轮胎干扰。
 
 ### 使用模拟节点
@@ -695,6 +699,10 @@ Frenet(s,l) 双轴反馈、两级安全预警、`controller_mode` 三模式切�
 5. **膨胀框范围修正**——`frenet_planner` 的 RViz 红色半透明 `inflated_obstacles` 膨胀框
    仅对 `tall` 正常障碍绘制；道路边缘轮胎为物理几何体、不在 ROS 话题中，既不进 planner
    也不画膨胀框，避免干扰避障逻辑的观感判断。
+6. **障碍真值不再由 `truth_perception` 注入**——感知组在 Gazebo 小车上加装了雷达，
+   障碍盒与轮胎均由雷达直接检测并以 `/obstacle_markers`（`ns=tall`/`flat_ground`）发布；
+   `truth_perception` 移除 `/obstacle_markers` 发布者，仅保留定位/GPS/IMU/中心线/边界真值。
+   仿真联调阶段算法核心消费的是雷达输出，与真实车一致，不再有"真值→算法"捷径。
 
 ### v2 相对 v1.5 的变更
 
