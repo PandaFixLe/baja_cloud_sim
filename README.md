@@ -703,12 +703,18 @@ Frenet(s,l) 双轴反馈、两级安全预警、`controller_mode` 三模式切�
    障碍盒与轮胎均由雷达直接检测并以 `/obstacle_markers`（`ns=tall`/`flat_ground`）发布；
    `truth_perception` 移除 `/obstacle_markers` 发布者，仅保留定位/GPS/IMU/中心线/边界真值。
    仿真联调阶段算法核心消费的是雷达输出，与真实车一致，不再有"真值→算法"捷径。
-7. **修复起点附近幽灵膨胀框**——雷达在起步时偶尔把车体自身/地面杂波当作 `tall`
-   障碍发布（base_link 原点附近），导致起点前几米出现无实物的预膨胀矩阵。
-   `frenet_planner` 与 `path_follower` 新增 `min_obstacle_range` 参数（默认 0.5 m），
-   过滤传感器原点附近的虚假检测，避免幽灵膨胀框。若膨胀框实为**道路边缘轮胎被
-   雷达误标成 `tall`**（首只轮胎约在起点 5 m 处），则属感知侧分类问题，需在雷达
-   节点确保轮胎不以 `ns=tall` 发布。
+7. **起点附近幽灵红框（已知小问题，影响极小）**——现象：起点附近 RViz 出现一个
+   `tall` 红色膨胀框，但该处实际没有障碍物，且车辆仅绕一个极小弧度。根因：
+   `mock_perception_node` 是**真感知到达前的占位调试工具**，内置一个测试用 `tall`
+   障碍（base_link 下 `x=12.0 m, y=1.2 m`，见 `mock_perception_node.py`）。若它残留
+   在后台与仿真/真雷达**同时运行**，就会持续发这个假障碍，既画红框又触发极小横向
+   避让，且会因卡住避障走廊导致车辆不动。**该节点不应与真实仿真/雷达同跑。**
+   `run.sh` 已加入启动前自动 `pkill -9 -f mock_perception`，避免旧进程残留。若手动
+   启动，跑新仿真前务必先 `pkill -9 -f mock_perception` 清理。影响评估：红框仅来自
+   假障碍，清理后消失，实际轨迹修正极小，可忽略。
+8. **障碍原点杂波过滤**——`frenet_planner` 与 `path_follower` 新增 `min_obstacle_range`
+   参数（默认 0.5 m），过滤传感器原点附近的虚假 `tall`/`flat_ground` 检测（车体自身/
+   地面杂波），作为一般性鲁棒性守卫，与第 7 条相互独立。
 
 ### v2 相对 v1.5 的变更
 

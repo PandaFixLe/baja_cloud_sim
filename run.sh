@@ -28,6 +28,14 @@ if [[ ! -f "$SCRIPT_DIR/install/setup.bash" ]]; then
 fi
 source "$SCRIPT_DIR/install/setup.bash"
 
+# 清理可能残留的 mock_perception 进程：它是真感知到达前的占位调试工具，
+# 不应与真雷达/真仿真同时运行，否则会发假障碍(如正前方 12m 的 tall)卡住车辆。
+if pgrep -f "mock_perception" >/dev/null 2>&1; then
+  echo "Cleaning up stale mock_perception_node processes..."
+  pkill -9 -f "mock_perception" 2>/dev/null || true
+  sleep 1
+fi
+
 export GZ_PARTITION="baja_${USER//[^a-zA-Z0-9_]/_}_$SEED"
 export GZ_SIM_RESOURCE_PATH="$SCRIPT_DIR/install/baja_cloud_sim/share/baja_cloud_sim:${GZ_SIM_RESOURCE_PATH:-}"
 GENERATED="$SCRIPT_DIR/runtime/scenario_$SEED"
