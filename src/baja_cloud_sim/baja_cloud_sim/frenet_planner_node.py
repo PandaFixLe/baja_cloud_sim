@@ -209,6 +209,12 @@ class FrenetPlannerNode(Node):
 
     def _publish_debug(self, result) -> None:
         array = MarkerArray()
+        # Transparent red "inflated_obstacles" box visualises the planner's
+        # internal safety margin for every *tall* obstacle. Road-edge tires are
+        # published under ns="tire" (see truth_perception_node) and never enter
+        # self.obstacles, so they are intentionally excluded from this view —
+        # tires exist only for the perception group's landmark detection, not for
+        # avoidance, and must not clutter the avoidance debug overlay.
         for index, obstacle in enumerate(self.obstacles):
             marker = Marker()
             marker.header.frame_id = "map"

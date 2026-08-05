@@ -100,6 +100,69 @@ def _obstacle_sdf(obstacle: Dict[str, float]) -> str:
     </model>"""
 
 
+def generate_edge_tires(centerline: Sequence[Dict[str, float]], spacing_m: float = 5.0,
+                         offset_m: float = 0.4) -> List[Dict[str, float]]:
+    """Place vertical cylinder obstacles (standing tires) along both road edges.
+
+    One tire is dropped every ``spacing_m`` metres of arc length, offset just
+    outside the road half-width (``half_width + offset_m``) on the left and
+    right boundary. This mirrors real Baja cross-country courses where tires
+    line the track to delineate the drivable corridor, and gives the perception
+    group a dense, regular landmark field to validate detection against.
+
+    Returns a flat list of tire dicts with world pose + geometry so the SDF
+    builder can render them.
+    """
+    tires: List[Dict[str, float]] = []
+    tire_id = 0
+    # Walk the centerline by arc length; drop a pair of tires whenever we have
+    # advanced ``spacing_m`` past the previous drop location.
+    next_drop = 0.0
+    for point in centerline:
+        s = float(point.get("s", 0.0))
+        if s + 1e-6 < next_drop:
+            continue
+        next_drop += spacing_m
+        hw = float(point.get("half_width", 4.0))
+        z = float(point.get("z", 0.0))
+        yaw = float(point.get("yaw", 0.0))
+        for sign in (1.0, -1.0):
+            lat = sign * (hw + offset_m)
+            x = point["x"] - math.sin(yaw) * lat
+            y = point["y"] + math.cos(yaw) * lat
+            tires.append({
+                "id": tire_id,
+                "x": x,
+                "y": y,
+                "z": z,
+                "yaw": yaw,
+                "side": "left" if sign > 0 else "right",
+            })
+            tire_id += 1
+    return tires
+
+
+def _tire_sdf(tire: Dict[str, float]) -> str:
+    """SDF for one vertical cylinder ('standing tire')."""
+    radius = 0.34
+    height = 0.7
+    return f"""
+    <model name="edge_tire_{tire['id']}">
+      <static>true</static>
+      <pose>{tire['x']:.5f} {tire['y']:.5f} {tire['z'] + height / 2:.5f} 0 0 {tire['yaw']:.5f}</pose>
+      <link name="body">
+        <collision name="collision">
+          <geometry><cylinder><radius>{radius:.3f}</radius><length>{height:.3f}</length></cylinder></geometry>
+          <surface><friction><ode><mu>0.9</mu><mu2>0.9</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>{radius:.3f}</radius><length>{height:.3f}</length></cylinder></geometry>
+          <material><ambient>0.05 0.05 0.05 1</ambient><diffuse>0.10 0.10 0.10 1</diffuse><pbr><metal><roughness>0.8</roughness><metalness>0.0</metalness></metal></pbr></material>
+        </visual>
+      </link>
+    </model>"""
+
+
 def _extend_runout(centerline: Sequence[Dict[str, float]], runout_m: float) -> List[Dict[str, float]]:
     """Append a plain straight stopping runout after the last centerline point.
 
@@ -133,11 +196,13 @@ def _extend_runout(centerline: Sequence[Dict[str, float]], runout_m: float) -> L
 
 def _build_world_sdf(centerline: Sequence[Dict[str, float]], obstacles: Sequence[Dict[str, float]],
                      mesh_path: Path, package_share: Path, start: Dict[str, float],
-                     road_surface: Sequence[Dict[str, float]]) -> str:
+                     road_surface: Sequence[Dict[str, float]],
+                     tires: Sequence[Dict[str, float]] = ()) -> str:
     """Build the Gazebo world SDF string for a given centerline + obstacles."""
     vehicle_uri = (package_share / "models" / "baja_vehicle").as_uri()
     road_uri = mesh_path.resolve().as_uri()
     obstacle_models = "\n".join(_obstacle_sdf(obstacle) for obstacle in obstacles)
+    tire_models = "\n".join(_tire_sdf(tire) for tire in tires)
     minimum_x = min(point["x"] for point in road_surface) - 15.0
     maximum_x = max(point["x"] for point in road_surface) + 15.0
     minimum_y = min(point["y"] for point in road_surface) - 15.0
@@ -166,6 +231,7 @@ def _build_world_sdf(centerline: Sequence[Dict[str, float]], obstacles: Sequence
     <model name="base_ground"><static>true</static><pose>{ground_x:.4f} {ground_y:.4f} {ground_z:.4f} 0 0 0</pose><link name="ground"><collision name="collision"><geometry><box><size>{ground_size_x:.4f} {ground_size_y:.4f} 0.2</size></box></geometry><surface><friction><ode><mu>1.1</mu><mu2>1.0</mu2></ode></friction></surface></collision><visual name="visual"><geometry><box><size>{ground_size_x:.4f} {ground_size_y:.4f} 0.2</size></box></geometry><material><ambient>0.16 0.25 0.12 1</ambient><diffuse>0.23 0.34 0.16 1</diffuse><pbr><metal><roughness>1.0</roughness><metalness>0.0</metalness></metal></pbr></material></visual></link></model>
     <model name="dirt_road"><static>true</static><link name="road"><collision name="collision"><geometry><mesh><uri>{road_uri}</uri></mesh></geometry><surface><friction><ode><mu>1.25</mu><mu2>1.0</mu2></ode></friction><contact><ode><kp>800000</kp><kd>220</kd><max_vel>0.08</max_vel><min_depth>0.0005</min_depth></ode></contact></surface></collision><visual name="visual"><geometry><mesh><uri>{road_uri}</uri></mesh></geometry><material><ambient>0.30 0.20 0.11 1</ambient><diffuse>0.46 0.31 0.17 1</diffuse><pbr><metal><roughness>1.0</roughness><metalness>0.0</metalness></metal></pbr></material></visual></link></model>
     {obstacle_models}
+    {tire_models}
     <include><uri>{vehicle_uri}</uri><name>baja_vehicle</name><pose>{start['x']:.5f} {start['y']:.5f} {start['z'] + 0.52:.5f} 0 0 {start['yaw']:.5f}</pose></include>
   </world>
 </sdf>
@@ -185,6 +251,7 @@ def generate(output: Path, seed: int, obstacle_count: int, package_share: Path, 
     road_surface = centerline
     left, right = generate_boundaries(centerline)
     obstacles = generate_obstacles(centerline, seed, obstacle_count)
+    tires = generate_edge_tires(centerline, spacing_m=5.0, offset_m=0.4)
     mesh_path = output / "dirt_road.obj"
     scenario_path = output / "scenario.json"
     world_path = output / "baja_100m.sdf"
@@ -212,12 +279,14 @@ def generate(output: Path, seed: int, obstacle_count: int, package_share: Path, 
         "left_boundary": [{"x": point[0], "y": point[1]} for point in left],
         "right_boundary": [{"x": point[0], "y": point[1]} for point in right],
         "obstacles": obstacles,
+        "edge_tires": tires,
         "finish_s": 100.0,
         "runout_m": runout_m,
     }
     scenario_path.write_text(json.dumps(scenario, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, centerline[0], road_surface)
+    world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, centerline[0], road_surface,
+                             tires=tires)
     world_path.write_text(world, encoding="utf-8")
     return {"world": str(world_path), "scenario": str(scenario_path), "mesh": str(mesh_path)}
 
@@ -234,6 +303,7 @@ def generate_loop(output: Path, seed: int, obstacle_count: int, package_share: P
     road_surface = centerline
     left, right = generate_boundaries(centerline)
     obstacles = generate_obstacles(centerline, seed, obstacle_count)
+    tires = generate_edge_tires(centerline, spacing_m=5.0, offset_m=0.4)
     mesh_path = output / "loop_road.obj"
     scenario_path = output / "loop_scenario.json"
     world_path = output / "baja_loop.sdf"
@@ -256,11 +326,13 @@ def generate_loop(output: Path, seed: int, obstacle_count: int, package_share: P
         "left_boundary": [{"x": point[0], "y": point[1]} for point in left],
         "right_boundary": [{"x": point[0], "y": point[1]} for point in right],
         "obstacles": obstacles,
+        "edge_tires": tires,
         "finish_s": 0.0,
         "runout_m": 0.0,
     }
     scenario_path.write_text(json.dumps(scenario, ensure_ascii=False, indent=2), encoding="utf-8")
-    world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, centerline[0], road_surface)
+    world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, centerline[0], road_surface,
+                             tires=tires)
     world_path.write_text(world, encoding="utf-8")
     return {"world": str(world_path), "scenario": str(scenario_path), "mesh": str(mesh_path)}
 

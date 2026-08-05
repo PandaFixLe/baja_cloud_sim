@@ -147,6 +147,11 @@ S4 │                 │ S2      起点 (0,0) 朝东
   - 平滑土坡：s = 16~30 m（高 0.55 m）、s = 76~89 m（高 0.45 m）
   - 圆弧减速带：s = 39 m（宽 1.20 m / 高 0.08 m）、s = 92 m（宽 1.00 m / 高 0.07 m）
 - 障碍物包围盒按 seed 可复现生成。
+- **道路边缘轮胎（edge_tires）**：沿中心线在道路两侧边界（`half_width + 0.4 m` 外侧）
+  每隔 **5 m** 弧长放置一个竖直黑色圆柱（半径 0.34 m、高 0.7 m），模拟真实越野赛道
+  用立放轮胎标定的赛道边界。轮胎写入 `scenario.json` 的 `edge_tires` 字段，并在
+  `/obstacle_markers` 下以 **`ns=tire`** 发布——**仅供感知组识别与对齐真实赛道
+  landmark，不参与路径规划/避障，也不绘制膨胀框**。
 
 ### 车辆
 
@@ -177,7 +182,7 @@ Gazebo OdometryPublisher（世界真值位姿）
        │                     ├─ /imu/yaw
        │                     ├─ /reference_centerline
        │                     ├─ /road_boundary_markers
-       │                     └─ /obstacle_markers
+       │                     └─ /obstacle_markers  (ns=tall | flat_ground | tire)
        └─ evaluator ─────────── results/seed_N/tracking_*.csv
 
 frenet_planner (10 Hz)
@@ -375,8 +380,10 @@ path_follower_node:
 ```
 
 - 障碍类型由 `MarkerArray` 的 `ns` 字段区分：**`tall`** → 高障碍（参与 Frenet 横向
-  走廊避让）、**`flat_ground`** → 特殊地面（仅纵向降速，直线通过）。**`ns` 缺失或
-  非上述值 → 忽略**（不静默默认，避免误分类）。
+  走廊避让）、**`flat_ground`** → 特殊地面（仅纵向降速，直线通过）、
+  **`tire`** → 道路边缘立放轮胎（仿真侧 `truth_perception` 按 5 m 间隔发布，
+  仅供感知组识别真实赛道 landmark，**不参与避障、不画膨胀框**）。
+  **`ns` 缺失或非上述值 → 忽略**（不静默默认，避免误分类）。
 - 安全状态机现已订阅 `/metrics/planned_clearance`：corridor 余量 < 5 cm 触发
   `EMERGENCY`、< 30 cm 触发 `SLOWDOWN`，此前该守卫因 clearance 未接入而恒不触发。
 
@@ -395,10 +402,13 @@ path_follower_node:
 | `/road_boundary_markers` | `base_link` | `LINE_STRIP`，`ns=road_left` / `road_right` | `points[]` 为相对车身坐标，前向 30–50 m、20–40 点 |
 | `/obstacle_markers` | `base_link` | `CUBE`，`ns=tall` | ★`pose.position`=相对车身坐标；★`ns=tall`；★`scale.x`=沿车身前向长度（走廊膨胀用）；`scale.y`=宽度（**不传则用 `obstacle_classes.flat_ground.default_half_width` 兜底**）；`scale.z`=高度（**算法不用，仅 RViz 显示，可不传**）；`pose.orientation`=相对偏航 |
 | `/obstacle_markers` | `base_link` | `CUBE`，`ns=flat_ground` | ★`pose.position`=相对车身坐标；★`ns=flat_ground`；★`scale.x`=特殊地面沿车身前向长度（降速过渡区用）；`scale.y/z` 同上为可选/不用 |
+| `/obstacle_markers` | `base_link` | `CUBE`，`ns=tire` | 道路边缘立放轮胎（仿真 `truth_perception` 按 5 m 间隔发布）。★`pose.position`=相对车身坐标；★`ns=tire`；`scale.x/y/z`≈轮胎尺寸。算法核心（planner / path_follower）**忽略**此类 marker，仅作感知可视化与对齐，不触发避障、不绘制膨胀框 |
 
 > **最小契约**：中心点坐标（`pose.position.x/y`）+ 类型（`ns`）+ 前向长度（`scale.x`）。
 > 宽度与高度对算法核心非必需——宽度由兜底参数处理，高度仅用于 RViz 盒子显示。
-> 仿真侧 `truth_perception` 已显式给障碍物标 `ns="tall"`，故现有仿真测试不受影响。
+> 仿真侧 `truth_perception` 已显式给随机障碍标 `ns="tall"`、给道路边缘轮胎标
+> `ns="tire"`，故现有仿真测试不受影响，且 planner 的红色膨胀框只对 `tall` 障碍绘制、
+> 不会覆盖轮胎。
 
 ### 使用模拟节点
 
@@ -585,7 +595,7 @@ PYTHONPATH=src/baja_cloud_sim python3 -m pytest src/baja_cloud_sim/test -q
 ```text
 runtime/scenario_<seed>/baja_100m.sdf      生成的 Gazebo 世界
 runtime/scenario_<seed>/dirt_road.obj      路面网格
-runtime/scenario_<seed>/scenario.json      中心线 / 边界 / 障碍定义
+runtime/scenario_<seed>/scenario.json      中心线 / 边界 / 障碍 / 边缘轮胎定义
 results/seed_<seed>/tracking_*.csv         逐帧指标
 results/seed_<seed>/gazebo_*.mp4           Gazebo 相机录像
 results/seed_<seed>/photos/*.png           轨迹图与时域图
@@ -677,6 +687,14 @@ Frenet(s,l) 双轴反馈、两级安全预警、`controller_mode` 三模式切�
 3. **障碍分类契约落地**（延续 v2.1 设计）：`ns=tall`→横向避让、`ns=flat_ground`→
    纵向降速直线通过、`ns` 缺失/其他→忽略；仿真侧 `truth_perception` 已显式标
    `ns="tall"`，故现有仿真测试零回归。
+4. **仿真地图：道路边缘轮胎（edge_tires）**——`scenario_generator` 沿中心线两侧边界
+   每隔 **5 m** 弧长放置竖直黑色圆柱（半径 0.34 m、高 0.7 m），写入 `scenario.json`
+   的 `edge_tires`，并在 `/obstacle_markers` 下以 **`ns=tire`** 发布。轮胎对齐真实
+   越野赛道用立放轮胎标定的赛道边界，专供**感知组识别 / 与真实赛道 landmark 对齐**，
+   **不参与路径规划与避障**（planner 的红色膨胀框只对 `tall` 障碍绘制，不覆盖轮胎）。
+5. **膨胀框范围修正**——`frenet_planner` 的 RViz 红色半透明 `inflated_obstacles` 膨胀框
+   仅对 `tall` 正常障碍绘制；道路边缘轮胎因发在独立 `ns=tire` 下，既不进 planner 也不
+   画膨胀框，避免干扰避障逻辑的观感判断。
 
 ### v2 相对 v1.5 的变更
 

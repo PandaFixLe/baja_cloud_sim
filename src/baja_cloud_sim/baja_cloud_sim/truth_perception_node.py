@@ -71,6 +71,7 @@ class TruthPerceptionNode(Node):
         self._publish_centerline()
         self.get_logger().info(
             f"Truth perception ready: {len(self.scenario['obstacles'])} boxes, "
+            f"{len(self.scenario.get('edge_tires', []))} edge tires, "
             f"{len(self.scenario['centerline'])} centerline samples, "
             f"localization sigma={self.position_stddev * 100.0:.1f} cm"
         )
@@ -229,6 +230,37 @@ class TruthPerceptionNode(Node):
             marker.color.g = 0.18
             marker.color.b = 0.08
             marker.color.a = 0.72
+            marker.lifetime.nanosec = 180_000_000
+            obstacle_array.markers.append(marker)
+        # Edge tires (standing tires along both road edges every 5 m) are also
+        # real perception targets — publish them as "tall" so the perception
+        # group can detect the same landmarks they will see on the real track.
+        # Use a 1e6 id offset to avoid clashing with the random box obstacles.
+        tire_radius = 0.34
+        tire_height = 0.7
+        for tire in self.scenario.get("edge_tires", []):
+            local = world_to_base((tire["x"], tire["y"]), (self.pose.x, self.pose.y), self.yaw)
+            if not (-self.backward <= local[0] <= self.forward and abs(local[1]) <= 12.0):
+                continue
+            marker = Marker()
+            marker.header.frame_id = "base_link"
+            marker.header.stamp = now
+            marker.ns = "tire"
+            marker.id = 1_000_000 + int(tire["id"])
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+            marker.pose.position.x = local[0]
+            marker.pose.position.y = local[1]
+            marker.pose.position.z = tire_height * 0.5
+            relative_yaw = wrap_angle(tire["yaw"] - self.yaw)
+            _, _, marker.pose.orientation.z, marker.pose.orientation.w = yaw_to_quaternion(relative_yaw)
+            marker.scale.x = tire_radius * 2.0
+            marker.scale.y = tire_radius * 2.0
+            marker.scale.z = tire_height
+            marker.color.r = 0.10
+            marker.color.g = 0.10
+            marker.color.b = 0.10
+            marker.color.a = 0.85
             marker.lifetime.nanosec = 180_000_000
             obstacle_array.markers.append(marker)
         self.obstacle_pub.publish(obstacle_array)
