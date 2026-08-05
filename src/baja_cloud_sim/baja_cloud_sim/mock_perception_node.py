@@ -46,6 +46,8 @@ class MockPerceptionNode(Node):
         self.declare_parameter("road_half_width", 3.0)      # 左右边界对称半宽
         self.declare_parameter("road_forward", 34.0)        # 边界向前可见距离
         self.declare_parameter("road_backward", 6.0)        # 边界向后可见距离
+        # 障碍物宽度兜底（算法核心不要求传 scale.y，缺失时用此值）
+        self.declare_parameter("obstacle_default_half_width", 0.9)
 
         boundary_topic = self.get_parameter("boundary_topic").value
         obstacle_topic = self.get_parameter("obstacle_topic").value
@@ -53,14 +55,16 @@ class MockPerceptionNode(Node):
         self.half_width = float(self.get_parameter("road_half_width").value)
         self.forward = float(self.get_parameter("road_forward").value)
         self.backward = float(self.get_parameter("road_backward").value)
+        self.obstacle_half_width = float(self.get_parameter("obstacle_default_half_width").value)
 
-        # 一对示例障碍物：一个高障碍(tall)，一个特殊地面(flat_ground)
-        # (x_forward, y_lateral, length, width, height, ns)
+        # 示例障碍物：一个高障碍(tall)，一个特殊地面(flat_ground)
+        # 最小契约：仅需 x/y(相对车身坐标) + length(前向长度) + ns(类型)
+        # 宽度/高度由算法核心兜底或仅用于 RViz 显示，无需感知组提供
         self._obstacles = [
             # 正前方 12m 处的高障碍，偏右 1.2m，应当触发横向避让
-            {"x": 12.0, "y": 1.2, "length": 1.0, "width": 0.8, "height": 1.2, "ns": "tall"},
+            {"x": 12.0, "y": 1.2, "length": 1.0, "ns": "tall"},
             # 正前方 20m 处的特殊地面(减速带/土坡)，直线通过+平滑降速
-            {"x": 20.0, "y": 0.0, "length": 3.0, "width": 1.8, "height": 0.08, "ns": "flat_ground"},
+            {"x": 20.0, "y": 0.0, "length": 3.0, "ns": "flat_ground"},
         ]
 
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
@@ -110,12 +114,16 @@ class MockPerceptionNode(Node):
             marker.action = Marker.ADD
             marker.pose.position.x = ob["x"]
             marker.pose.position.y = ob["y"]
-            marker.pose.position.z = ob["height"] * 0.5
+            # 盒子显示高度：tall 用长度近似，flat_ground 给极小显示高度
+            # （scale.z 算法不用，仅 RViz 可视化；高度非必需字段）
+            show_z = ob["length"] * 0.6 if ob["ns"] == "tall" else 0.05
+            marker.pose.position.z = show_z * 0.5
             # 面向车身（无相对偏航）
             _, _, marker.pose.orientation.z, marker.pose.orientation.w = yaw_to_quaternion(0.0)
+            # 最小契约：仅 scale.x (前向长度) 为算法必需；scale.y 用兜底宽度
             marker.scale.x = ob["length"]
-            marker.scale.y = ob["width"]
-            marker.scale.z = ob["height"]
+            marker.scale.y = 2.0 * self.obstacle_half_width
+            marker.scale.z = show_z
             if ob["ns"] == "tall":
                 marker.color.r, marker.color.g, marker.color.b, marker.color.a = (1.0, 0.18, 0.08, 0.72)
             else:  # flat_ground

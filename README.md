@@ -390,12 +390,14 @@ path_follower_node:
 
 ### 话题契约（感知组 → 算法核心）
 
-| 话题 | 帧 | 类型 / `ns` | 字段约定 |
+| 话题 | 帧 | 类型 / `ns` | 字段约定（★=必需，其余可选） |
 |------|------|------------|---------|
 | `/road_boundary_markers` | `base_link` | `LINE_STRIP`，`ns=road_left` / `road_right` | `points[]` 为相对车身坐标，前向 30–50 m、20–40 点 |
-| `/obstacle_markers` | `base_link` | `CUBE`，`ns=tall` | `pose.position`=相对车身坐标；`scale.x/y/z`=长宽高；`pose.orientation`=相对偏航 |
-| `/obstacle_markers` | `base_link` | `CUBE`，`ns=flat_ground` | 同上，`scale.x`=特殊地面沿车身前向长度 |
+| `/obstacle_markers` | `base_link` | `CUBE`，`ns=tall` | ★`pose.position`=相对车身坐标；★`ns=tall`；★`scale.x`=沿车身前向长度（走廊膨胀用）；`scale.y`=宽度（**不传则用 `obstacle_classes.flat_ground.default_half_width` 兜底**）；`scale.z`=高度（**算法不用，仅 RViz 显示，可不传**）；`pose.orientation`=相对偏航 |
+| `/obstacle_markers` | `base_link` | `CUBE`，`ns=flat_ground` | ★`pose.position`=相对车身坐标；★`ns=flat_ground`；★`scale.x`=特殊地面沿车身前向长度（降速过渡区用）；`scale.y/z` 同上为可选/不用 |
 
+> **最小契约**：中心点坐标（`pose.position.x/y`）+ 类型（`ns`）+ 前向长度（`scale.x`）。
+> 宽度与高度对算法核心非必需——宽度由兜底参数处理，高度仅用于 RViz 盒子显示。
 > 仿真侧 `truth_perception` 已显式给障碍物标 `ns="tall"`，故现有仿真测试不受影响。
 
 ### 使用模拟节点
