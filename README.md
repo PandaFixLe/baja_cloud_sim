@@ -703,6 +703,12 @@ Frenet(s,l) 双轴反馈、两级安全预警、`controller_mode` 三模式切�
    障碍盒与轮胎均由雷达直接检测并以 `/obstacle_markers`（`ns=tall`/`flat_ground`）发布；
    `truth_perception` 移除 `/obstacle_markers` 发布者，仅保留定位/GPS/IMU/中心线/边界真值。
    仿真联调阶段算法核心消费的是雷达输出，与真实车一致，不再有"真值→算法"捷径。
+7. **修复起点附近幽灵膨胀框**——雷达在起步时偶尔把车体自身/地面杂波当作 `tall`
+   障碍发布（base_link 原点附近），导致起点前几米出现无实物的预膨胀矩阵。
+   `frenet_planner` 与 `path_follower` 新增 `min_obstacle_range` 参数（默认 0.5 m），
+   过滤传感器原点附近的虚假检测，避免幽灵膨胀框。若膨胀框实为**道路边缘轮胎被
+   雷达误标成 `tall`**（首只轮胎约在起点 5 m 处），则属感知侧分类问题，需在雷达
+   节点确保轮胎不以 `ns=tall` 发布。
 
 ### v2 相对 v1.5 的变更
 

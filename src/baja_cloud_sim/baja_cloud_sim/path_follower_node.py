@@ -158,6 +158,11 @@ class PathFollowerNode(Node):
         self._flat_approach = float(self.get_parameter("obstacle_classes.flat_ground.approach_distance").value)
         self._flat_slow = float(self.get_parameter("obstacle_classes.flat_ground.slow_speed").value)
         self._flat_half_width = float(self.get_parameter("obstacle_classes.flat_ground.default_half_width").value)
+        # Detections within this base_link radius of the sensor origin are
+        # treated as spurious self/clutter (radar reporting the vehicle chassis
+        # or ground clang at startup) and ignored.
+        self.declare_parameter("min_obstacle_range", 0.5)
+        self._min_obstacle_range = float(self.get_parameter("min_obstacle_range").value)
         self._centerline_pts: list = []  # [(x,y,z), ...] for nearest-neighbour lookup
 
         # s-projection reference (replaces Euclidean nearest-neighbour)
@@ -307,6 +312,9 @@ class PathFollowerNode(Node):
         ground = []
         for marker in message.markers:
             cls = marker.ns
+            # Ignore spurious self/clutter detections at the sensor origin.
+            if math.hypot(marker.pose.position.x, marker.pose.position.y) < self._min_obstacle_range:
+                continue
             if cls == "tall":
                 x, y = base_to_world(
                     (marker.pose.position.x, marker.pose.position.y),

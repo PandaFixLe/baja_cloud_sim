@@ -21,6 +21,8 @@ frenet_planner_node:
     desired_clearance: 1.2
     vehicle_length: 3.0
     vehicle_width: 1.5
+    # 忽略传感器原点附近(车体自身/地面杂波)的虚假障碍检测，避免起点附近出现幽灵膨胀框
+    min_obstacle_range: 0.5
 
 path_follower_node:
   ros__parameters:
@@ -56,6 +58,8 @@ path_follower_node:
         approach_distance: 5.0      # 提前/过后对称平滑过渡距离 (m)
         slow_speed: 2.0             # 通过特殊地面时的目标速度 (m/s)
         default_half_width: 0.9     # tall 默认包围盒半宽兜底 (车宽1.5*0.6)
+    # 忽略传感器原点附近(车体自身/地面杂波)的虚假障碍检测，避免起点附近幽灵膨胀框
+    min_obstacle_range: 0.5
 
     # ── Longitudinal cascaded-PID (Apollo-style) ──
     lon_kp: 2.0

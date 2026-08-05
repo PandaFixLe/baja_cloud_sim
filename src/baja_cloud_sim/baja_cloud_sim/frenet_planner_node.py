@@ -48,6 +48,12 @@ class FrenetPlannerNode(Node):
             vehicle_length=float(self.get_parameter("vehicle_length").value),
             vehicle_width=float(self.get_parameter("vehicle_width").value),
         )
+        # Detections within this base_link radius of the sensor origin are
+        # treated as spurious self/clutter (e.g. the radar reporting the vehicle
+        # chassis or ground clang at startup) and ignored — the planner cannot
+        # avoid something it is already on top of, and these produce phantom
+        # inflated boxes near the spawn point.
+        self.min_obstacle_range = float(self.get_parameter("min_obstacle_range").value)
         self.centerline = []
         self.position = None
         self.yaw_navigation = 0.0
@@ -112,6 +118,9 @@ class FrenetPlannerNode(Node):
             # longitudinal derating and must NOT trigger lateral avoidance.
             # Markers without a recognised ns are ignored (no silent default).
             if marker.ns != "tall":
+                continue
+            # Ignore spurious self/clutter detections at the sensor origin.
+            if math.hypot(marker.pose.position.x, marker.pose.position.y) < self.min_obstacle_range:
                 continue
             x, y = base_to_world((marker.pose.position.x, marker.pose.position.y), self.position, self.yaw_world)
             q = marker.pose.orientation
