@@ -3,8 +3,12 @@
 面向 **Ubuntu 22.04 + ROS 2 Humble + Gazebo Harmonic** 的自动驾驶赛车规划-控制闭环仿真工程。
 以 BAJA SAE 方程式越野车为对象，覆盖「场景生成 → 感知模拟 → Frenet 局部规划 → 横纵向控制 → 执行器 → 指标评价」全链路。
 
-当前分支 **`v2`**：横向为 Apollo 式 **LQR + 前馈**主控，纵向为**级联 PID**。
+当前分支 **`v2.2`**：横向为 Apollo 式 **LQR + 前馈**主控，纵向为**级联 PID**。
 在 294 m 闭环赛道上可稳定跑完整圈，平均中心线偏差 **0.08 m**，转向饱和率 **0%**。
+
+> 本分支面向**实车（Orin）移植对接**：在 v2.1 终点减速停车的基础上，新增
+> `mock_perception_node` 模拟感知组信息流，并加固了感知-控制接口（障碍分类、
+> 安全状态机 clearance 守卫、特殊地面兜底），为接入真实感知包做准备。
 
 ---
 
@@ -195,7 +199,22 @@ actuator_adapter
        │
        ▼
 Gazebo AckermannSteering 插件
+
+──── 实车对接准备 ────
+
+mock_perception（调试/对接用，非运行必需）
+  ├─ /road_boundary_markers  (base_link, LINE_STRIP, ns=road_left/road_right)
+  └─ /obstacle_markers       (base_link, CUBE, ns=tall | flat_ground)
+       │   ↑ 与 truth_perception 同话题契约，可无缝替换
+       ▼
+  算法核心层（frenet_planner / path_follower）  ← 平台无关，实车不改
 ```
+
+> **平台边界**：`truth_perception`（仿真，读 Gazebo 真值）与未来的真实
+> 定位/感知节点，以及 `actuator_adapter`（仿真，发 Gazebo cmd_vel）与未来的
+> 底盘驱动节点，是**唯一**需要随平台替换的两端；中间规划-控制核心不变。
+> `mock_perception` 用于在没有 Gazebo / 真实感知时验证核心节点能正确接收
+> 约定格式的消息（详见[感知对接与模拟节点](#感知对接与模拟节点)）。
 
 ### RViz 可视化
 
@@ -337,6 +356,65 @@ path_follower_node:
     terrain_min_speed: 1.0
 ```
 
+### 感知接口与安全
+
+```yaml
+path_follower_node:
+  ros__parameters:
+    use_terrain_profile: false     # 实车对接感知后统一由 flat_ground 处理地形降速
+    obstacle_classes:
+      tall:
+        lateral_avoid: true        # 高障碍：横向避让 + 按 clearance 减速
+        desired_clearance: 1.5
+        min_speed: 1.5
+      flat_ground:
+        lateral_avoid: false       # 特殊地面：直线通过 + 平滑降速，不横向避让
+        approach_distance: 5.0     # 提前/过后对称平滑过渡距离 (m)
+        slow_speed: 2.0            # 通过特殊地面时的目标速度 (m/s)
+        default_half_width: 0.9    # length 缺失时特殊地面半宽兜底
+```
+
+- 障碍类型由 `MarkerArray` 的 `ns` 字段区分：**`tall`** → 高障碍（参与 Frenet 横向
+  走廊避让）、**`flat_ground`** → 特殊地面（仅纵向降速，直线通过）。**`ns` 缺失或
+  非上述值 → 忽略**（不静默默认，避免误分类）。
+- 安全状态机现已订阅 `/metrics/planned_clearance`：corridor 余量 < 5 cm 触发
+  `EMERGENCY`、< 30 cm 触发 `SLOWDOWN`，此前该守卫因 clearance 未接入而恒不触发。
+
+---
+
+## 感知对接与模拟节点
+
+实车移植时，规划-控制核心**不改动**，只需把两端平台节点替换为真实传感器/底盘驱动，
+并使它们的话题与下方约定对齐。为在真实感知包到达前验证算法核心能正确消费消息，
+仓库内置 `mock_perception_node`：
+
+### 话题契约（感知组 → 算法核心）
+
+| 话题 | 帧 | 类型 / `ns` | 字段约定 |
+|------|------|------------|---------|
+| `/road_boundary_markers` | `base_link` | `LINE_STRIP`，`ns=road_left` / `road_right` | `points[]` 为相对车身坐标，前向 30–50 m、20–40 点 |
+| `/obstacle_markers` | `base_link` | `CUBE`，`ns=tall` | `pose.position`=相对车身坐标；`scale.x/y/z`=长宽高；`pose.orientation`=相对偏航 |
+| `/obstacle_markers` | `base_link` | `CUBE`，`ns=flat_ground` | 同上，`scale.x`=特殊地面沿车身前向长度 |
+
+> 仿真侧 `truth_perception` 已显式给障碍物标 `ns="tall"`，故现有仿真测试不受影响。
+
+### 使用模拟节点
+
+```bash
+# 单独运行（任意 ROS 2 环境，无需 Gazebo）
+ros2 run baja_cloud_sim mock_perception
+
+# 一键联调：算法核心 + mock 感知 + RViz（无 Gazebo，仅验证话题接线）
+ros2 launch baja_cloud_sim mock_perception.launch.py
+ros2 topic echo /obstacle_markers | grep ns      # 应见 tall / flat_ground
+ros2 topic echo /road_boundary_markers | grep ns # 应见 road_left / road_right
+```
+
+> 该 launch 没有真实里程计，核心节点拿不到车辆位姿，**仅用于检查话题接线与
+> RViz 显示**，不能跑实际行驶。参数 `road_half_width` / `road_forward` /
+> `road_backward` / `publish_rate_hz` / `boundary_topic` / `obstacle_topic`
+> 可在 `ros2 run` 时覆盖以适配对接场景。
+
 ### 终点逻辑（finish）
 
 ```yaml
@@ -399,13 +477,20 @@ core/                      ← 当前生效的算法包
 └── config.py                控制器配置数据类（LQRConfig 等）
 
 scenario_generator.py      按 seed 生成 SDF 世界 + OBJ 路面 + scenario.json
-truth_perception_node.py   由真值里程计派生带噪声的定位/GPS/IMU/中心线/边界/障碍
+truth_perception_node.py   由真值里程计派生带噪声的定位/GPS/IMU/中心线/边界/障碍（仿真用）
+mock_perception_node.py    ★ 模拟感知组信息流（实车对接调试用，非运行必需）
 frenet_planner_node.py     10 Hz 规划，输出 /planned_path 与 /planner/status
 path_follower_node.py      ★ 核心控制器（横向 LQR + 纵向 PID + 状态机）
-actuator_adapter_node.py   /cmd_control → /model/baja_vehicle/cmd_vel
+actuator_adapter_node.py   /cmd_control → /model/baja_vehicle/cmd_vel（仿真用）
 evaluator_node.py          指标计算与 CSV 记录
 video_recorder_node.py     ffmpeg 录制 Gazebo 相机
 ```
+
+> **实车移植角色**：`truth_perception_node` 与 `actuator_adapter_node` 是
+> 平台相关两端（仿真读 Gazebo 真值 / 发 Gazebo cmd_vel），实车需替换为真实
+> 定位感知节点与底盘驱动节点；其话题均已参数化（`ground_truth_odom_topic`、
+> `cmd_vel_topic`、`odom_topic`）。`mock_perception_node` 用于在**无 Gazebo**
+> 环境下按约定契约发感知消息，验证算法核心接收链路。
 
 ### 遗留代码（不影响运行）
 
@@ -557,6 +642,7 @@ Frenet(s,l) 双轴反馈、两级安全预警、`controller_mode` 三模式切�
 | `v1.5` | v1.5 | PP + LQR 残差 | 纯追踪基底 + LQR 残差（±3° 反馈上限）+ 曲率速度剖面 + 3 级状态机 |
 | **`v2`** | **v2** | **LQR + 前馈** | **Apollo 式主控 + 级联 PID 纵向 + 执行器滞后修复** |
 | **`v2.1`** | **v2.1** | **LQR + 前馈** | **新增终点减速停车逻辑 + 红色终点线 RViz Marker** |
+| **`v2.2`** | **v2.2** | **LQR + 前馈** | **实车对接准备：`mock_perception` 模拟感知 + 感知接口加固** |
 
 ### v2.1 相对 v2 的变更
 
@@ -570,6 +656,25 @@ Frenet(s,l) 双轴反馈、两级安全预警、`controller_mode` 三模式切�
 3. **`.gitignore` 清理**——`build/`、`install/`、`log/`、`results/`、`runtime/` 不再入库，
    zip 体积大幅减小，且不再携带绝对路径符号链接；使用者解压后执行
    `./install_ubuntu2204.sh` 即可重新构建。
+
+### v2.2 相对 v2.1 的变更
+
+面向**实车（Orin）移植对接**的接口准备（算法核心层不变）：
+
+1. **模拟感知组信息流节点**——新增 `mock_perception_node`（入口 `mock_perception`）
+   与 `mock_perception.launch.py`。无 Gazebo 依赖，按约定契约发
+   `/road_boundary_markers`（`base_link` `LINE_STRIP`，`ns=road_left/road_right`）
+   与 `/obstacle_markers`（`base_link` `CUBE`，`ns=tall` / `flat_ground`），
+   用于在真实感知包到达前验证算法核心的接收链路。
+2. **感知-控制接口加固**：
+   - `path_follower` 删除 `_obstacles` 重复赋值；
+   - 安全状态机现订阅 `/metrics/planned_clearance`，clearance 守卫
+     （`EMERGENCY` / `SLOWDOWN`）真正生效，此前因 clearance 未接入而恒不触发；
+   - `flat_ground` 的 `default_half_width` 参数在感知未给 `length` 时兜底，
+     避免特殊地面退化成点导致降速逻辑失效。
+3. **障碍分类契约落地**（延续 v2.1 设计）：`ns=tall`→横向避让、`ns=flat_ground`→
+   纵向降速直线通过、`ns` 缺失/其他→忽略；仿真侧 `truth_perception` 已显式标
+   `ns="tall"`，故现有仿真测试零回归。
 
 ### v2 相对 v1.5 的变更
 

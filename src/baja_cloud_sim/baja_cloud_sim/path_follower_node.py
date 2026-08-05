@@ -116,6 +116,7 @@ class PathFollowerNode(Node):
         self._enable_lqr = bool(self.get_parameter("enable_lqr").value)
         self.planner_feasible = False
         self._planner_status_received = False  # guards startup state-machine
+        self._planned_clearance = float("inf")  # last planner-reported clearance (m)
         self.last_path_time = None
         self._last_valid_path = []  # freewheel buffer
         self._infeasible_count = 0
@@ -250,6 +251,11 @@ class PathFollowerNode(Node):
         self.create_subscription(String, "/planner/status", self._status_callback, 10)
         self.create_subscription(Odometry, "/ground_truth/odom", self._odom_callback, 20)
         self.create_subscription(MarkerArray, "/obstacle_markers", self._obstacle_callback, 10)
+        # Planner-reported minimum clearance to the lateral corridor (metres).
+        # Feeds the safety state machine's clearance guards (EMERGENCY when the
+        # corridor collapses below 5 cm, SLOWDOWN below 30 cm). Without this the
+        # state machine would only react to lateral tracking error.
+        self.create_subscription(Float32, "/metrics/planned_clearance", self._clearance_callback, 10)
         _latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                               durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(PathMessage, "/reference_centerline",
@@ -326,7 +332,6 @@ class PathFollowerNode(Node):
                 })
         self._obstacles = obstacles
         self._ground_anomalies = ground
-        self._obstacles = obstacles
 
     def _centerline_callback(self, message: PathMessage) -> None:
         """Store centreline for terrain derating and finish-progress tracking."""
@@ -506,6 +511,11 @@ class PathFollowerNode(Node):
         self.planner_feasible = message.data == "FEASIBLE"
         self._planner_status_received = True
 
+    def _clearance_callback(self, message: Float32) -> None:
+        # Cleared once per planner cycle; NaN/garbage guarded by the state machine.
+        if math.isfinite(message.data):
+            self._planned_clearance = float(message.data)
+
     def _publish_stop(self) -> None:
         message = AckermannDriveStamped()
         message.header.stamp = self.get_clock().now().to_msg()
@@ -574,7 +584,7 @@ class PathFollowerNode(Node):
                         {"x": center_ref[0], "y": center_ref[1], "yaw": self.yaw_world}))
         self._ctrl_state = _evaluate_state(
             self._infeasible_count, self._consecutive_feasible,
-            track_err, 1.0,  # clearance not available in node
+            track_err, self._planned_clearance,
             self._ctrl_state,
         )
 
@@ -1115,28 +1125,33 @@ def _derate_speed_profile(
     return derated
 
 
-def _ground_derate(self, current_speed: float) -> float:
-    """Longitudinal derating for flat_ground (special terrain) anomalies.
+    def _ground_derate(self, current_speed: float) -> float:
+        """Longitudinal derating for flat_ground (special terrain) anomalies.
 
-    Anomalies are base_link segments {x: centre (forward +), length: forward
-    extent}. The vehicle (x=0) should slow to `slow_speed` while the segment
-    overlaps the vehicle, and recover smoothly over `approach_distance` after
-    the segment's end passes behind the vehicle (x_end < 0).
+        Anomalies are base_link segments {x: centre (forward +), length: forward
+        extent}. The vehicle (x=0) should slow to `slow_speed` while the segment
+        overlaps the vehicle, and recover smoothly over `approach_distance` after
+        the segment's end passes behind the vehicle (x_end < 0).
 
-    Picks the *nearest* anomaly (smallest x_start) — tracks are assumed to
-    contain at most one special-terrain patch at a time. Result is clamped to
-    idle_speed so the vehicle never stalls to a halt on flat ground.
-    """
-    if not self._ground_anomalies:
-        return float("inf")
-    # nearest anomaly ahead of (or overlapping) the vehicle
-    cand = [g for g in self._ground_anomalies if g["x"] > -g["length"]]
-    if not cand:
-        return float("inf")
-    g = min(cand, key=lambda a: a["x"])
-    x_start = g["x"] - g["length"] / 2.0
-    x_end = g["x"] + g["length"] / 2.0
-    approach = max(0.5, self._flat_approach)
+        Picks the *nearest* anomaly (smallest x_start) — tracks are assumed to
+        contain at most one special-terrain patch at a time. Result is clamped to
+        idle_speed so the vehicle never stalls to a halt on flat ground.
+        """
+        if not self._ground_anomalies:
+            return float("inf")
+        # nearest anomaly ahead of (or overlapping) the vehicle
+        cand = [g for g in self._ground_anomalies if g["x"] > -g["length"]]
+        if not cand:
+            return float("inf")
+        g = min(cand, key=lambda a: a["x"])
+        # Fall back to the configured default half-width when the perception
+        # group does not provide a forward extent (length), so a zero/empty
+        # length cannot collapse the anomaly to a point and break the
+        # ramp math below.
+        length = g["length"] if g["length"] > 1e-3 else 2.0 * self._flat_half_width
+        x_start = g["x"] - length / 2.0
+        x_end = g["x"] + length / 2.0
+        approach = max(0.5, self._flat_approach)
 
     if x_end < 0.0:
         # fully behind the vehicle → recovering
