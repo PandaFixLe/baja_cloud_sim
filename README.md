@@ -3,12 +3,15 @@
 面向 **Ubuntu 22.04 + ROS 2 Humble + Gazebo Harmonic** 的自动驾驶赛车规划-控制闭环仿真工程。
 以 BAJA SAE 方程式越野车为对象，覆盖「场景生成 → 感知模拟 → Frenet 局部规划 → 横纵向控制 → 执行器 → 指标评价」全链路。
 
-当前分支 **`v2.2`**：横向为 Apollo 式 **LQR + 前馈**主控，纵向为**级联 PID**。
-在 294 m 闭环赛道上可稳定跑完整圈，平均中心线偏差 **0.08 m**，转向饱和率 **0%**。
+当前分支 **`v2.3`**：横向为 Apollo 式 **LQR + 前馈**主控（含速度自适应反馈软化），
+纵向为**级联 PID**。在 294 m 闭环赛道上可稳定跑完整圈，平均中心线偏差 **0.08 m**，
+转向饱和率 **0%**，弯道无蛇形振荡。
 
-> 本分支面向**实车（Orin）移植对接**：在 v2.1 终点减速停车的基础上，新增
-> `mock_perception_node` 模拟感知组信息流，并加固了感知-控制接口（障碍分类、
-> 安全状态机 clearance 守卫、特殊地面兜底），为接入真实感知包做准备。
+> 本分支在 v2.2 实车对接准备的基础上，**新增 EPS（电动助力转向）执行器模型**以验证
+> LQR 在真实齿条约束（15°/s 转速上限 + 1° 死区）下的表现，并补齐三项控制优化：
+> 速度自适应反馈软化（`beta(v)`）、双向曲率前瞻速度剖面、三档速度分级。EPS 仅存在于
+> **仿真层** `actuator_adapter_node`，实车层用不同 launch 文件替换该节点即可去除，
+> 不重复建模。
 
 ---
 
@@ -267,6 +270,10 @@ x     = [∫e_y, e_y, ė_y, e_ψ, ė_ψ]        （5 状态增广 LQI）
 - **fallback**：仅当 LQR 不可用时（`enable_lqr=false`、车速低于 `lqr_min_velocity`、
   或参考曲率缺失）退回纯追踪。
 - **速率限制**：4°/周期（≈80°/s）；航向误差 >5° 时放宽至 8°（≈160°/s）快速回正。
+- **速度自适应反馈软化（β(v)）**：高速时反馈项乘以
+  `β = 1 / (1 + α·(v − v_ref))`，饱和到 `[β_min, 1.0]`。小误差在高速下不再被过激
+  放大成蛇形修正；低速（v ≤ v_ref）`β=1.0` 保持完整修正力。补偿的是真实齿条（EPS）
+  约束，**实车仍需保留**。
 
 ### 纵向 — 级联 PID
 
@@ -320,6 +327,34 @@ Gazebo `AckermannSteering` 插件将 `<min/max_acceleration>` 与 `<min/max_jerk
 > 已验证**无效**并已回退的尝试：`steer_p_gain` 18→200、转向关节 `damping` 7→0.5、
 > `velocity` 2.5→10、`friction` 0.6→0.05。
 
+### EPS 执行器模型（仿真层）
+
+为使 LQR 在**真实齿条约束**下得到验证，仿真层 `actuator_adapter_node` 内置了 EPS
+（Electric Power Steering）模型，模拟真实转向机构：
+
+| 约束 | 值 | 说明 |
+|------|------|------|
+| 齿条最大转速 | **15°/s** | `eps_max_rate_deg`，满打 35° 约 2.3 s，拟合真实电动助力齿条 |
+| 死区 | **1°** | `eps_deadband_deg`，消除小幅抖动/传感器噪声 |
+| 一阶滞后 | `eps_tau` = **0.0** | 设为 0（关闭显式滞后）：Gazebo `AckermannSteering` 插件已自带
+  ~80 ms 物理转向响应，显式滞后会与之一阶双重建模、引入额外相位滞后 → 蛇形；
+  依赖 Gazebo 物理响应即可 |
+
+模型实现（`_apply_eps`）：`|Δ| < deadband` → 保持原角（去抖）；否则先按 `eps_tau`
+（=0 时退化为瞬时）做一阶滞后，再按 `eps_max_rate × dt` 限幅（齿条转速上限）。
+最终 `angular.z = v · tan(δ_eps) / L` 发给 Gazebo。
+
+**诊断话题**：`/metrics/cmd_steer`（LQR 理想指令角）与 `/metrics/eps_actual_steer`
+（经 EPS 模型后的实际齿条角，Float32），用于叠加对比、量化滞后。
+`evaluator_node` 记录 `eps_steer_rad` 列，`tools/plot_tracking.py` 的 `time_*.png`
+叠加绿色实际齿条角与滞后带。
+
+> **关键认知**：EPS 的 15°/s 转速上限会破坏「LQR 指令立即到达」的假设，是引入该模型后
+> 控制恶化的根源——**不是 LQR 算法被改坏**，而是执行器约束首次被如实建模。修复方式是
+> 让 LQR 侧保留完整修正权限（见下方速度自适应反馈软化 + 控制器侧不重复限速），由 EPS
+> 层施加真实约束。此后反馈软化（`beta(v)`）**在实车上仍需保留**——它补偿的是真实齿条，
+> 非仿真专属。
+
 ---
 
 ## 参数说明
@@ -339,9 +374,15 @@ path_follower_node:
     dare_solve_interval: 50             # DARE 强制重解步数间隔 (50×0.05s=2.5s)
     s_proj_lookahead: 0.8               # 参考点弧长前视 (m)
     max_steering_angle: 35.0
-    max_steer_rate: 1.2                 # 转向角速率上限 (rad/s) ≈ 69°/s
-    steer_lowpass_alpha: 0.22           # 输出一阶低通系数 (越小越平滑)
+    max_steer_rate: 1.2                 # 控制器侧转向速率上限 (rad/s) ≈ 69°/s — 宽松,
+                                        # 让 LQR 修正指令完整到达 EPS; 真实齿条 15°/s
+                                        # 约束由 EPS(actuator_adapter)施加, 此处不重复限速
+    steer_lowpass_alpha: 0.5            # 输出一阶低通系数 (0.5 较 0.22 大幅减重相位滞后,
+                                        # 避免平滑吃掉纠偏高频分量导致蛇形)
     state_lowpass_alpha: 0.45           # 反馈状态(yaw_rate/vel)低通系数
+    fb_speed_soften_alpha: 0.3          # 速度自适应反馈软化系数 α
+    fb_speed_ref: 2.5                   # 参考速度 (m/s), 低于此速度 β=1.0(不软化)
+    fb_speed_beta_min: 0.5              # β 下限, 防止极端高速反馈完全失效
 ```
 
 > **速率限制与突变保护**：节点层对 LQR 输出依次施加
@@ -367,12 +408,16 @@ path_follower_node:
 
 ```yaml
     use_speed_profile: true
-    speed_profile_max: 3.5
-    max_lateral_accel: 1.8        # 曲率速度上限依据
+    speed_profile_max: 3.5        # fallback/历史兼容: tier 非法时退回此值
+    max_lateral_accel: 1.2        # 弯道侧向加速度上限 (m/s²)
+    curvature_lookahead_m: 3.0    # 曲率前瞻+后视距离 (m): 双向约束, 出弯加速延后防弯切直蛇形
     desired_clearance: 3.5        # 障碍降速起始距离
     min_speed_obstacle: 2.0
     terrain_slope_threshold: 0.06
     terrain_min_speed: 1.0
+    tier_slow_speed: 2.5          # slow 档: 直线段最大速度
+    tier_normal_speed: 3.5        # normal 档: 直线段最大速度
+    tier_fast_speed: 4.5          # fast 档: 直线段最大速度
 ```
 
 ### 感知接口与安全
@@ -401,6 +446,29 @@ path_follower_node:
   > 算法核心无需处理轮胎，也不画膨胀框。
 - 安全状态机现已订阅 `/metrics/planned_clearance`：corridor 余量 < 5 cm 触发
   `EMERGENCY`、< 30 cm 触发 `SLOWDOWN`，此前该守卫因 clearance 未接入而恒不触发。
+
+### EPS 执行器模型（仿真层参数）
+
+EPS 模型仅在仿真层 `actuator_adapter_node` 生效，实车层用不同 launch 文件替换该节点
+即去除：
+
+```yaml
+actuator_adapter_node:
+  ros__parameters:
+    eps_tau: 0.0                  # 一阶滞后时间常数 (s) → 0: 依赖 Gazebo 物理响应(~80ms)
+    eps_max_rate_deg: 15.0        # 齿条最大转速 (deg/s), 真实约束, 15 为拟合值
+    eps_deadband_deg: 1.0         # 死区 (deg), 消除小幅抖动/传感器噪声
+```
+
+诊断话题：
+
+```yaml
+/metrics/cmd_steer          # Float32, LQR 理想指令角
+/metrics/eps_actual_steer   # Float32, 经 EPS 模型后的实际齿条角
+```
+
+`evaluator_node` 记录 `eps_steer_rad` 列，`tools/plot_tracking.py` 的 `time_*.png`
+叠加绿色实际齿条角与滞后带，用于量化 EPS 引入的相位滞后。
 
 ---
 
@@ -509,6 +577,7 @@ mock_perception_node.py    ★ 模拟感知组信息流（实车对接调试用�
 frenet_planner_node.py     10 Hz 规划，输出 /planned_path 与 /planner/status
 path_follower_node.py      ★ 核心控制器（横向 LQR + 纵向 PID + 状态机）
 actuator_adapter_node.py   /cmd_control → /model/baja_vehicle/cmd_vel（仿真用）
+                          ★ 内置 EPS 执行器模型（15°/s 转速上限 + 1° 死区，仿真层）
 evaluator_node.py          指标计算与 CSV 记录
 video_recorder_node.py     ffmpeg 录制 Gazebo 相机
 ```
@@ -518,6 +587,9 @@ video_recorder_node.py     ffmpeg 录制 Gazebo 相机
 > 定位感知节点与底盘驱动节点；其话题均已参数化（`ground_truth_odom_topic`、
 > `cmd_vel_topic`、`odom_topic`）。`mock_perception_node` 用于在**无 Gazebo**
 > 环境下按约定契约发感知消息，验证算法核心接收链路。
+> **EPS 执行器模型仅存在于仿真层 `actuator_adapter_node`**，实车用真实底盘驱动节点
+> 替换该节点即自动去除 EPS 建模（EPS 的 15°/s 转速上限是真实齿条约束，实车由硬件
+> 物理实现，软件无需重复；但 `beta(v)` 反馈软化需保留在算法核心侧以补偿真实齿条）。
 
 ### 遗留代码（不影响运行）
 
@@ -708,6 +780,7 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 | **`v2`** | **v2** | **LQR + 前馈** | **Apollo 式主控 + 级联 PID 纵向 + 执行器滞后修复** |
 | **`v2.1`** | **v2.1** | **LQR + 前馈** | **新增终点减速停车逻辑 + 红色终点线 RViz Marker** |
 | **`v2.2`** | **v2.2** | **LQR + 前馈** | **实车对接准备：`mock_perception` 模拟感知 + 感知接口加固** |
+| **`v2.3`** | **v2.3** | **LQR + 前馈 + β(v)** | **EPS 执行器模型 + 速度自适应反馈软化 + 双向曲率前瞻 + 三档速度分级** |
 
 ### v2.1 相对 v2 的变更
 
@@ -802,6 +875,43 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
    - `_compute_longitudinal_target()`：速度剖面 → finish 限速 → 地形降速 → PID → 安全状态机 → 加加速度限幅
    - `_publish_actuation()`：转向平滑（低通 + 速率限幅 + 突变保护）+ 发布 Ackermann + lookahead marker
    - `_control()` 退化为编排层（约 35 行）。拆分后逻辑等价，已实跑验证无 AttributeError。
+
+### v2.3 相对 v2.2 的变更
+
+面向**实车移植前的控制鲁棒性验证**，在保持算法核心架构不变的前提下：
+
+1. **EPS（电动助力转向）执行器模型**——`actuator_adapter_node` 新增 `_apply_eps`：
+   - 齿条转速上限 `eps_max_rate_deg` = **15°/s**（拟合真实电动助力齿条，满打 35° 约 2.3 s）；
+   - 死区 `eps_deadband_deg` = **1°**（消除小幅抖动/传感器噪声）；
+   - 一阶滞后 `eps_tau` = **0.0**（关闭显式滞后，依赖 Gazebo `AckermannSteering` 插件
+     自带的 ~80 ms 物理转向响应，避免与之一阶双重建模引入额外相位滞后导致蛇形）。
+   - 最终 `angular.z = v · tan(δ_eps) / L` 发给 Gazebo。
+   - 新增诊断话题 `/metrics/cmd_steer`（LQR 理想指令角）与 `/metrics/eps_actual_steer`
+     （实际齿条角，Float32）；`evaluator_node` 记录 `eps_steer_rad` 列，
+     `tools/plot_tracking.py` 的 `time_*.png` 叠加绿色实际齿条角与滞后带。
+   - **仅仿真层**：实车用不同 launch 文件替换 `actuator_adapter_node` 即去除 EPS 建模。
+2. **速度自适应反馈软化（β(v)）**——`core/controller.py` 的 `compute_lqr_steering`
+   新增 β(v) 项：`β = 1 / (1 + α·(v − v_ref))`，饱和到 `[β_min, 1.0]`。高速时反馈项
+   乘 β<1，小误差不再被过激放大成蛇形；低速（v ≤ v_ref）β=1.0 保持完整修正力。
+   参数 `fb_speed_soften_alpha=0.3` / `fb_speed_ref=2.5` / `fb_speed_beta_min=0.5`。
+   **该软化补偿真实齿条约束，实车仍需保留**（非仿真专属）。
+3. **双向曲率前瞻速度剖面**——`core/speed_profile.py` 的曲率限幅由「当前点曲率」改为
+   受 `[i−look, i+look]` 窗口内**最大曲率**约束（`curvature_lookahead_m`=3.0）：
+   - 前瞻（i+look）：提前减速进弯（车还没到弯、前方有弯就压速）；
+   - 后视（i−look）：延后加速出弯（车还在弯里/刚出弯、后方弯道曲率仍约束速度，
+     离开弯道 3 m 后才允许提速），根除「弯切直时过早加速 → LQR 跟不上 → 蛇形」。
+4. **三档速度分级**——`tier_slow_speed`=2.5 / `tier_normal_speed`=3.5 /
+   `tier_fast_speed`=4.5 m/s（直线段分级），`speed_profile_max`=3.5 作为兜底；
+   配合 β(v) 与双向前瞻，弯道与直道过渡更平稳。
+5. **转向平滑参数回稳**——`max_steer_rate` 恢复为 1.2 rad/s（此前误设为 0.25 与 EPS
+   形成双重限速、吃掉修正能力）；`steer_lowpass_alpha` 由 0.22 提至 0.5（减相位滞后，
+   避免平滑吃掉纠偏高频分量）；`max_lateral_accel` 实测定为 1.2（1.6 自跑出界更重）。
+
+> **EPS 引入后的调试历程（根因澄清）**：控制恶化不是 LQR 算法被改坏，而是 EPS 的
+> 15°/s 转速上限首次被如实建模，使「LQR 指令立即到达」的假设失效。修复路径为：
+> （a）控制器侧不重复限速（`max_steer_rate` 恢复 1.2）让修正指令完整到达 EPS；
+> （b）β(v) 高速弱化反馈；（c）双向曲率前瞻防过早出弯加速；（d）低通系数提至 0.5。
+> 最终实跑验证弯道无蛇形、直道修正有力。
 
 ### v2 相对 v1.5 的变更
 

@@ -32,12 +32,13 @@ class EvaluatorNode(Node):
         # an application-specific name.
         self._csv_handle = self.output_path.open("w", encoding="utf-8", newline="")
         self.writer = csv.writer(self._csv_handle)
-        self.writer.writerow(["time_s", "x", "y", "yaw_rad", "speed_mps", "command_speed_mps", "steering_rad", "tracking_error_m", "center_error_m", "minimum_clearance_m", "planning_ms", "planner_status", "collision_count", "progress_percent"])
+        self.writer.writerow(["time_s", "x", "y", "yaw_rad", "speed_mps", "command_speed_mps", "steering_rad", "eps_steer_rad", "tracking_error_m", "center_error_m", "minimum_clearance_m", "planning_ms", "planner_status", "collision_count", "progress_percent"])
         self.position = None
         self.yaw = 0.0
         self.speed = 0.0
         self.command_speed = 0.0
         self.steering = 0.0
+        self.eps_steering = 0.0
         self.planned_path = []
         self.planning_ms = 0.0
         self.planner_status = "WAITING"
@@ -53,6 +54,7 @@ class EvaluatorNode(Node):
         self.create_subscription(Odometry, "/ground_truth/odom", self._odom_callback, 20)
         self.create_subscription(PathMessage, "/planned_path", self._path_callback, 10)
         self.create_subscription(AckermannDriveStamped, "/cmd_control", self._command_callback, 20)
+        self.create_subscription(Float32, "/metrics/eps_actual_steer", self._eps_steer_callback, 10)
         self.create_subscription(Float32, "/metrics/planning_ms", self._planning_callback, 10)
         self.create_subscription(String, "/planner/status", self._status_callback, 10)
         self.create_timer(0.10, self._evaluate)
@@ -70,6 +72,9 @@ class EvaluatorNode(Node):
     def _command_callback(self, message: AckermannDriveStamped) -> None:
         self.command_speed = message.drive.speed
         self.steering = message.drive.steering_angle
+
+    def _eps_steer_callback(self, message: Float32) -> None:
+        self.eps_steering = float(message.data)
 
     def _planning_callback(self, message: Float32) -> None:
         self.planning_ms = float(message.data)
@@ -101,7 +106,7 @@ class EvaluatorNode(Node):
         self.collision_active = collision
         progress = 100.0 * reference["s"] / max(self.scenario["length"], 1.0)
         elapsed = (self.get_clock().now() - self.started).nanoseconds / 1e9
-        self.writer.writerow([f"{elapsed:.3f}", f"{self.position[0]:.5f}", f"{self.position[1]:.5f}", f"{self.yaw:.5f}", f"{self.speed:.4f}", f"{self.command_speed:.4f}", f"{self.steering:.5f}", f"{tracking_error:.4f}", f"{center_error:.4f}", f"{minimum_clearance:.4f}", f"{self.planning_ms:.3f}", self.planner_status, self.collision_count, f"{progress:.2f}"])
+        self.writer.writerow([f"{elapsed:.3f}", f"{self.position[0]:.5f}", f"{self.position[1]:.5f}", f"{self.yaw:.5f}", f"{self.speed:.4f}", f"{self.command_speed:.4f}", f"{self.steering:.5f}", f"{self.eps_steering:.5f}", f"{tracking_error:.4f}", f"{center_error:.4f}", f"{minimum_clearance:.4f}", f"{self.planning_ms:.3f}", self.planner_status, self.collision_count, f"{progress:.2f}"])
         self._csv_handle.flush()
 
         pose = self._pose_stamped()

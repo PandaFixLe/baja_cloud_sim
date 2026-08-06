@@ -44,6 +44,10 @@ class SpeedProfileConfig:
     min_speed_obstacle: float = 2.0
     max_jerk: float = 4.0
     curvature_smooth_window: int = 10
+    # 曲率前瞻距离(m): 当前点速度受"前方 lookahead 内最大曲率"约束,
+    # 避免车还在弯里就因前方直道κ=0而提前加速(导致弯切直蛇形震荡).
+    # 0 = 关闭前瞻(用当前点曲率, 原行为).
+    curvature_lookahead_m: float = 3.0
 
 
 @dataclass
@@ -67,6 +71,11 @@ class LQRConfig:
     lqr_min_velocity: float = 0.5
     dare_solve_interval: int = 10
     velocity_recompute_threshold: float = 0.5
+    # 方案 G: 反馈项速度自适应软化. 高速时小误差不应激进修, 防止放大成蛇形.
+    # beta(v) = 1/(1+alpha*(v-v_ref)), 饱和到 [beta_min, 1.0]. alpha=0 关闭.
+    fb_speed_soften_alpha: float = 0.3
+    fb_speed_ref: float = 2.5           # 低于此速度 beta=1.0(不软化)
+    fb_speed_beta_min: float = 0.5      # beta 下限, 防止极端高速反馈完全失效
 
 
 @dataclass
@@ -74,7 +83,7 @@ class ControllerConfig:
     target_speed: float = 2.5
     lookahead_distance: float = 3.0
     heading_gain: float = 1.2
-    max_steering_deg: float = 35.0
+    max_steering_deg: float = 26.0
 
 
 @dataclass

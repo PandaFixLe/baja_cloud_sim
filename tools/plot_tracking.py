@@ -142,6 +142,7 @@ def _plot_time_series(data: dict, cl_curvatures: np.ndarray,
     actual_speed = data["speed_mps"]
     cmd_speed = data.get("command_speed_mps", None)
     actual_steering = np.degrees(data["steering_rad"])
+    eps_steering = np.degrees(data["eps_steer_rad"]) if "eps_steer_rad" in data else None
 
     # Estimate expected steering from centreline curvature
     expected_steering = np.zeros_like(t)
@@ -172,8 +173,13 @@ def _plot_time_series(data: dict, cl_curvatures: np.ndarray,
     ax1.set_title("Speed & Steering vs Time")
 
     # --- Steering ---
-    ax2.plot(t, actual_steering, "b-", linewidth=0.8, alpha=0.8, label="actual steering")
+    ax2.plot(t, actual_steering, "b-", linewidth=0.8, alpha=0.8, label="cmd steering (LQR ideal)")
     ax2.plot(t, expected_steering, "r-", linewidth=0.7, alpha=0.6, label="expected (kinematic)")
+    if eps_steering is not None:
+        ax2.plot(t, eps_steering, "g-", linewidth=0.8, alpha=0.9, label="EPS actual rack")
+        # Band between ideal command and actual rack angle → visualises EPS lag/slew.
+        ax2.fill_between(t, eps_steering, actual_steering, color="green", alpha=0.15,
+                         label="EPS lag band")
     ax2.axhline(y=0, color="gray", linewidth=0.5)
     ax2.set_xlabel("time (s)")
     ax2.set_ylabel("steering (deg)")

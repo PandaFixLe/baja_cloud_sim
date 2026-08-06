@@ -6,12 +6,12 @@
     <link name="base_link">
       <pose>0 0 0 0 0 0</pose>
       <inertial>
-        <mass>256.0</mass>
+        <mass>210.0</mass>
         <pose>-0.08 0 0 0 0 0</pose>
         <inertia>
-          <ixx>54.65</ixx>
-          <iyy>155.53</iyy>
-          <izz>182.40</izz>
+          <ixx>44.84</ixx>
+          <iyy>127.58</iyy>
+          <izz>149.66</izz>
           <ixy>0</ixy>
           <ixz>0</ixz>
           <iyz>0</iyz>
@@ -93,7 +93,7 @@
         <pose>0 0 0 1.570796 0 0</pose>
         <geometry>
           <cylinder>
-            <radius>0.292</radius>
+            <radius>0.279</radius>
             <length>0.18</length>
           </cylinder>
         </geometry>
@@ -119,7 +119,7 @@
         <pose>0 0 0 1.570796 0 0</pose>
         <geometry>
           <cylinder>
-            <radius>0.292</radius>
+            <radius>0.279</radius>
             <length>0.18</length>
           </cylinder>
         </geometry>
@@ -147,7 +147,7 @@
         <pose>0 0 0 1.570796 0 0</pose>
         <geometry>
           <cylinder>
-            <radius>0.292</radius>
+            <radius>0.279</radius>
             <length>0.18</length>
           </cylinder>
         </geometry>
@@ -173,7 +173,7 @@
         <pose>0 0 0 1.570796 0 0</pose>
         <geometry>
           <cylinder>
-            <radius>0.292</radius>
+            <radius>0.279</radius>
             <length>0.18</length>
           </cylinder>
         </geometry>
@@ -229,7 +229,7 @@
         <pose>0 0 0 1.570796 0 0</pose>
         <geometry>
           <cylinder>
-            <radius>0.292</radius>
+            <radius>0.279</radius>
             <length>0.18</length>
           </cylinder>
         </geometry>
@@ -255,7 +255,7 @@
         <pose>0 0 0 1.570796 0 0</pose>
         <geometry>
           <cylinder>
-            <radius>0.292</radius>
+            <radius>0.279</radius>
             <length>0.18</length>
           </cylinder>
         </geometry>
@@ -283,7 +283,7 @@
         <pose>0 0 0 1.570796 0 0</pose>
         <geometry>
           <cylinder>
-            <radius>0.292</radius>
+            <radius>0.279</radius>
             <length>0.18</length>
           </cylinder>
         </geometry>
@@ -309,7 +309,7 @@
         <pose>0 0 0 1.570796 0 0</pose>
         <geometry>
           <cylinder>
-            <radius>0.292</radius>
+            <radius>0.279</radius>
             <length>0.18</length>
           </cylinder>
         </geometry>
@@ -406,8 +406,8 @@
       <wheel_separation>1.49</wheel_separation>
       <kingpin_width>1.31</kingpin_width>
       <wheel_base>1.43</wheel_base>
-      <wheel_radius>0.292</wheel_radius>
-      <steering_limit>0.610865</steering_limit>
+      <wheel_radius>0.279</wheel_radius>
+      <steering_limit>0.45379</steering_limit>
       <steer_p_gain>18.0</steer_p_gain>
       <min_velocity>-1.0</min_velocity>
       <max_velocity>5.0</max_velocity>

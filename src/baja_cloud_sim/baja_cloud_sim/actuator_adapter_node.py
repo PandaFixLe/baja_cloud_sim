@@ -9,6 +9,7 @@ from ackermann_msgs.msg import AckermannDriveStamped
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from std_msgs.msg import Float32
 
 from .core import smooth_velocity
 
@@ -26,15 +27,31 @@ class ActuatorAdapterNode(Node):
         # the Gazebo ground-truth odometry; on the real car it would be the
         # fused localization odometry instead.
         self.declare_parameter("odom_topic", "/ground_truth/odom")
+        # EPS (electric power steering) actuator model.  Mirrors the real-car
+        # rack: a first-order lag with time constant eps_tau, a slew-rate limit
+        # eps_max_rate_deg (deg/s) and a small deadband eps_deadband_deg so the
+        # controller is exercised against realistic steering dynamics before
+        # porting to the Orin platform (see real_car_params_regulation.md).
+        self.declare_parameter("eps_tau", 0.1)
+        self.declare_parameter("eps_max_rate_deg", 12.0)
+        self.declare_parameter("eps_deadband_deg", 1.0)
         self.wheelbase = float(self.get_parameter("wheelbase").value)
         self.timeout = float(self.get_parameter("command_timeout").value)
+        self.eps_tau = float(self.get_parameter("eps_tau").value)
+        self.eps_max_rate = math.radians(float(self.get_parameter("eps_max_rate_deg").value))
+        self.eps_deadband = math.radians(float(self.get_parameter("eps_deadband_deg").value))
         self.last_command = None
         self.last_stamp = None
         self._current_speed = 0.0
         self._prev_accel = 0.0
+        self._eps_angle = 0.0
+        self._last_pub_stamp = None
         self.command_pub = self.create_publisher(
             Twist, self.get_parameter("cmd_vel_topic").value, 10)
         self.status_pub = self.create_publisher(AckermannDriveStamped, "/vehicle_status", 10)
+        # EPS diagnostics: ideal command vs actual rack angle (after EPS model).
+        self.cmd_steer_pub = self.create_publisher(Float32, "/metrics/cmd_steer", 10)
+        self.eps_steer_pub = self.create_publisher(Float32, "/metrics/eps_actual_steer", 10)
         self.create_subscription(AckermannDriveStamped, "/cmd_control", self._command_callback, 20)
         self.create_subscription(Odometry, self.get_parameter("odom_topic").value, self._odom_callback, 20)
         self.create_timer(0.05, self._publish)
@@ -48,13 +65,33 @@ class ActuatorAdapterNode(Node):
         status.header.stamp = self.get_clock().now().to_msg()
         status.header.frame_id = "base_link"
         status.drive.speed = math.hypot(message.twist.twist.linear.x, message.twist.twist.linear.y)
-        status.drive.steering_angle = self.last_command.drive.steering_angle if self.last_command else 0.0
+        status.drive.steering_angle = self._eps_angle
         self.status_pub.publish(status)
+
+    def _apply_eps(self, target_steering: float, dt: float) -> float:
+        """First-order lag + rate limit + deadband, emulating the EPS rack."""
+        # Deadband: ignore tiny command moves (rack freeplay / sensor noise).
+        if abs(target_steering - self._eps_angle) < self.eps_deadband:
+            return self._eps_angle
+        # First-order lag toward the commanded angle.
+        alpha = 1.0 - math.exp(-dt / max(self.eps_tau, 1e-4))
+        lagged = self._eps_angle + (target_steering - self._eps_angle) * alpha
+        # Slew-rate limit (deg/s -> rad over dt).
+        max_step = self.eps_max_rate * dt
+        delta = max(-max_step, min(max_step, lagged - self._eps_angle))
+        self._eps_angle += delta
+        return self._eps_angle
 
     def _publish(self) -> None:
         output = Twist()
+        now = self.get_clock().now()
+        dt = 0.05
+        if self._last_pub_stamp is not None:
+            dt = (now - self._last_pub_stamp).nanoseconds / 1e9
+        dt = max(min(dt, 0.2), 1e-4)
+        self._last_pub_stamp = now
         if self.last_command is not None and self.last_stamp is not None:
-            age = (self.get_clock().now() - self.last_stamp).nanoseconds / 1e9
+            age = (now - self.last_stamp).nanoseconds / 1e9
             if age <= self.timeout:
                 target_speed = float(self.last_command.drive.speed)
                 steering = float(self.last_command.drive.steering_angle)
@@ -64,12 +101,21 @@ class ActuatorAdapterNode(Node):
                     prev_accel=self._prev_accel, max_jerk=4.0,
                 )
                 self._current_speed = smoothed
+                # EPS actuator model: realistic steering rack dynamics.
+                self._apply_eps(steering, dt)
                 output.linear.x = smoothed
-                output.angular.z = smoothed * math.tan(steering) / self.wheelbase if abs(smoothed) > 0.01 else 0.0
+                output.angular.z = smoothed * math.tan(self._eps_angle) / self.wheelbase if abs(smoothed) > 0.01 else 0.0
         else:
             self._current_speed = 0.0
             self._prev_accel = 0.0
+            self._eps_angle = 0.0
         self.command_pub.publish(output)
+        # Diagnostics: ideal command vs actual rack angle (post-EPS).
+        if self.last_command is not None and self.last_stamp is not None:
+            age = (now - self.last_stamp).nanoseconds / 1e9
+            if age <= self.timeout:
+                self.cmd_steer_pub.publish(Float32(data=float(self.last_command.drive.steering_angle)))
+                self.eps_steer_pub.publish(Float32(data=float(self._eps_angle)))
 
 
 def main(args=None) -> None:

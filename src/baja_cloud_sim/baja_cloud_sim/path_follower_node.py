@@ -81,7 +81,7 @@ class PathFollowerNode(Node):
         for name, default in (
             ("origin_latitude", 30.0), ("origin_longitude", 114.0),
             ("target_speed", 2.5), ("lookahead_distance", 3.0),
-            ("kp_heading", 1.2), ("max_steering_angle", 35.0),
+            ("kp_heading", 1.2), ("max_steering_angle", 26.0),
         ):
             self.declare_parameter(name, default)
         self.origin_lat = float(self.get_parameter("origin_latitude").value)
@@ -103,9 +103,13 @@ class PathFollowerNode(Node):
         self.declare_parameter("lqr_R", 1.0)
         self.declare_parameter("lqr_v_norm", 2.5)
         self.declare_parameter("lqr_Q", [5.0, 2.0, 2.0, 1.0])
-        self.declare_parameter("lqr_max_steering", 0.6)
+        self.declare_parameter("lqr_max_steering", 0.4538)
         self.declare_parameter("lqr_velocity_recompute_threshold", 0.5)
         self.declare_parameter("dare_solve_interval", 50)
+        # 方案 G: 反馈项速度自适应软化参数
+        self.declare_parameter("fb_speed_soften_alpha", 0.3)
+        self.declare_parameter("fb_speed_ref", 2.5)
+        self.declare_parameter("fb_speed_beta_min", 0.5)
         self._lqr = LQRController()
         self._lqr_cfg = LQRConfig(
             R=float(self.get_parameter("lqr_R").value),
@@ -116,13 +120,17 @@ class PathFollowerNode(Node):
                 self.get_parameter("lqr_velocity_recompute_threshold").value),
             dare_solve_interval=int(
                 self.get_parameter("dare_solve_interval").value),
+            fb_speed_soften_alpha=float(
+                self.get_parameter("fb_speed_soften_alpha").value),
+            fb_speed_ref=float(self.get_parameter("fb_speed_ref").value),
+            fb_speed_beta_min=float(self.get_parameter("fb_speed_beta_min").value),
         )
         self._current_speed = 0.0
         self._prev_steering = 0.0  # low-pass filter state (Phase 3.2)
         self._prev_target_speed = 0.0  # speed rate-limiter state
         # 转向输出平滑参数 (实车轮胎友好)
-        self.declare_parameter("max_steer_rate", 1.5)
-        self.declare_parameter("steer_lowpass_alpha", 0.35)
+        self.declare_parameter("max_steer_rate", 0.25)
+        self.declare_parameter("steer_lowpass_alpha", 0.22)
         self.declare_parameter("state_lowpass_alpha", 0.5)
         self._max_steer_rate = float(self.get_parameter("max_steer_rate").value)
         self._steer_alpha = float(self.get_parameter("steer_lowpass_alpha").value)
@@ -193,6 +201,10 @@ class PathFollowerNode(Node):
         self.declare_parameter("max_lateral_accel", 1.8)
         self._speed_cfg.max_lateral_accel = float(
             self.get_parameter("max_lateral_accel").value)
+        # 曲率前瞻距离: 出弯加速延后, 防止弯切直蛇形(0=关闭)
+        self.declare_parameter("curvature_lookahead_m", 3.0)
+        self._speed_cfg.curvature_lookahead_m = float(
+            self.get_parameter("curvature_lookahead_m").value)
 
         self._diag_tick = 0  # speed-profile diagnostic counter
 

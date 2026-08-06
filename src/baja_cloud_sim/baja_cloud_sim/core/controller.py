@@ -276,6 +276,14 @@ def compute_lqr_steering(
     * the 5-state augmented form (``Q`` has 5 elements) adds integral
       action that removes steady-state lateral offset.
 
+    Speed-adaptive feedback softening (方案 G): the feedback term
+    ``delta_fb`` is multiplied by ``beta = 1/(1 + alpha*(v - v_ref))``
+    so that at high speed small lateral errors do NOT trigger an
+    aggressive correction that gets amplified into serpentine.  The
+    feed-forward ``delta_ff`` is unchanged — steady-state curvature
+    following still relies on the kinematic feedforward, only the
+    *dynamic correction* is softened.
+
     ``reference`` must carry ``x, y, yaw, kappa``.  Returns ``None`` when
     the gain is unavailable so the caller can fall back to pure pursuit.
     """
@@ -292,6 +300,19 @@ def compute_lqr_steering(
         state = state[1:]
     delta_ff = compute_feedforward(reference.get("kappa", 0.0), v_op, lqr_cfg)
     delta_fb = -float(K @ state)
+    # ── 方案 G: 反馈项速度自适应软化 ──
+    # beta(v) = 1 / (1 + alpha * (v - v_ref)), 饱和到 [beta_min, 1.0]
+    # 高速时 beta<1 → 反馈弱化, 小误差不再过激放大成蛇形;
+    # 前馈 delta_ff 不变 → 弯道稳态跟随精度靠前馈保证.
+    alpha = getattr(lqr_cfg, "fb_speed_soften_alpha", 0.0)
+    v_ref = getattr(lqr_cfg, "fb_speed_ref", 2.5)
+    beta_min = getattr(lqr_cfg, "fb_speed_beta_min", 0.5)
+    if alpha > 0.0 and v_op > v_ref:
+        beta = 1.0 / (1.0 + alpha * (v_op - v_ref))
+        beta = max(beta_min, min(1.0, beta))
+    else:
+        beta = 1.0
+    delta_fb *= beta
     delta = delta_ff + delta_fb
     e_y = float(state[1]) if use_int else float(state[0])
     e_psi = float(state[3]) if use_int else float(state[2])

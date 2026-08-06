@@ -21,9 +21,40 @@ def plan_speed_profile(
         return []
     import numpy as np
     v = np.full(N, cfg.max_speed, dtype=np.float64)
-    for i in range(N):
-        k = max(abs(curvatures[i]), 1e-4)
-        v[i] = min(v[i], math.sqrt(cfg.max_lateral_accel / k))
+    # 曲率前瞻+后视: 当前点速度受 [i-look, i+look] 区间内最大曲率约束.
+    # 前瞻(i+look): 提前减速进弯(车还没到弯, 但前方有弯就压速).
+    # 后视(i-look): 延后加速出弯(车还在弯里/刚出弯, 后方弯道曲率仍约束速度,
+    #   只有车离开弯道 look 距离后才允许速度升高). look 足够小(3m)不影响远处直道.
+    # 目的: 防止"车还在弯里(转向δ_ff满弯)就因前方直道κ=0提前加速"导致离心力飙升+LQR跟不上→蛇形.
+    look_m = max(0.0, getattr(cfg, "curvature_lookahead_m", 0.0))
+    if look_m > 0.0:
+        # 预算每个点的前方/后方 lookahead 索引界
+        fwd_idx = [0] * N
+        bwd_idx = [0] * N
+        j_hi = 0
+        j_lo = 0
+        for i in range(N):
+            target_hi = arc_lengths[i] + look_m
+            while j_hi < N - 1 and arc_lengths[j_hi] < target_hi:
+                j_hi += 1
+            fwd_idx[i] = j_hi
+            target_lo = arc_lengths[i] - look_m
+            while j_lo < i and arc_lengths[j_lo] < target_lo:
+                j_lo += 1
+            bwd_idx[i] = j_lo
+        for i in range(N):
+            # 取 [bwd_idx[i], fwd_idx[i]] 区间内最大 |κ|
+            k = 0.0
+            for jj in range(bwd_idx[i], fwd_idx[i] + 1):
+                ak = abs(curvatures[jj])
+                if ak > k:
+                    k = ak
+            k = max(k, 1e-4)
+            v[i] = min(v[i], math.sqrt(cfg.max_lateral_accel / k))
+    else:
+        for i in range(N):
+            k = max(abs(curvatures[i]), 1e-4)
+            v[i] = min(v[i], math.sqrt(cfg.max_lateral_accel / k))
     # Forward pass — acceleration constraint.
     # Speed can only increase so fast along the path (limited by max_accel).
     # This replaces the old deceleration-forcing forward pass (which used
