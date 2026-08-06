@@ -32,8 +32,11 @@ class ActuatorAdapterNode(Node):
         # eps_max_rate_deg (deg/s) and a small deadband eps_deadband_deg so the
         # controller is exercised against realistic steering dynamics before
         # porting to the Orin platform (see real_car_params_regulation.md).
-        self.declare_parameter("eps_tau", 0.1)
-        self.declare_parameter("eps_max_rate_deg", 12.0)
+        # 默认值与 config/params.yaml 对齐; 即使不带参数文件单独启动也是稳定配置
+        # (eps_tau=0 依赖 Gazebo AckermannSteering 插件自带的物理转向响应, 不与之一阶
+        # 双重建模; eps_max_rate_deg=15 为拟合真实电动助力齿条的转速上限)
+        self.declare_parameter("eps_tau", 0.0)
+        self.declare_parameter("eps_max_rate_deg", 15.0)
         self.declare_parameter("eps_deadband_deg", 1.0)
         self.wheelbase = float(self.get_parameter("wheelbase").value)
         self.timeout = float(self.get_parameter("command_timeout").value)
