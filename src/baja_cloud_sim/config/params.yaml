@@ -39,6 +39,13 @@ path_follower_node:
     lqr_R: 3.0
     lqr_v_norm: 1.5
     lqr_Q: [0.05, 8.0, 2.0, 4.0, 0.5] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] (retuned for line-holding)
+    # ── 转向输出平滑 (实车轮胎友好，避免高频极端反向) ──
+    lqr_max_steering: 0.6            # LQR 输出幅值上限 (rad)，与 ControllerConfig 对齐
+    lqr_velocity_recompute_threshold: 1.0  # DARE 重解阈值 (放宽，减少速度波动触发重解)
+    dare_solve_interval: 50              # DARE 强制重解步数间隔 (50×0.05s=2.5s，减少 K 跳变频率)
+    max_steer_rate: 1.2              # 转向角速率上限 (rad/s)，每50ms最多≈3.4°
+    steer_lowpass_alpha: 0.22        # 输出一阶低通系数 (越小越平滑，0.22更丝滑)
+    state_lowpass_alpha: 0.45        # 反馈状态(yaw_rate/vel)低通系数 (越小越平滑)
     s_proj_lookahead: 0.8
     max_lateral_accel: 1.8                # curvature ceiling (was 2.5 default)
     terrain_slope_threshold: 0.06
@@ -68,7 +75,14 @@ path_follower_node:
     lon_i_limit: 2.0
     idle_speed: 1.0
     slope_comp_gain: 1.0
-    speed_profile_max: 3.5
+    # ── 速度档位 (speed tier) ──
+    # 仅调直线段最大速度，弯道/避障/地形降速逻辑不动。
+    # slow≈均速2.5 / normal≈均速3.5 / fast≈均速4.5(直线天花板抬到5.5，均速受弯道占比拖累)
+    speed_tier: "normal"          # slow | normal | fast
+    tier_slow_speed: 2.8          # slow 档：直线段最大速度
+    tier_normal_speed: 4.0        # normal 档：直线段最大速度 (现状)
+    tier_fast_speed: 5.5          # fast 档：直线段最大速度
+    speed_profile_max: 4.0        # fallback/历史兼容：tier 非法时退回此值
     lon_accel_step: 0.20   # m/s per 50 ms ≈ 4.0 m/s²
     lon_decel_step: 0.25   # ≈ 5.0 m/s²
     # ── Finish / 终点逻辑（line | circle | time | none） ──

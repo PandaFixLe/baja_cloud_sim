@@ -103,15 +103,30 @@ class PathFollowerNode(Node):
         self.declare_parameter("lqr_R", 1.0)
         self.declare_parameter("lqr_v_norm", 2.5)
         self.declare_parameter("lqr_Q", [5.0, 2.0, 2.0, 1.0])
+        self.declare_parameter("lqr_max_steering", 0.6)
+        self.declare_parameter("lqr_velocity_recompute_threshold", 0.5)
+        self.declare_parameter("dare_solve_interval", 50)
         self._lqr = LQRController()
         self._lqr_cfg = LQRConfig(
             R=float(self.get_parameter("lqr_R").value),
             v_norm=float(self.get_parameter("lqr_v_norm").value),
             Q=tuple(float(v) for v in self.get_parameter("lqr_Q").value),
+            max_steering=float(self.get_parameter("lqr_max_steering").value),
+            velocity_recompute_threshold=float(
+                self.get_parameter("lqr_velocity_recompute_threshold").value),
+            dare_solve_interval=int(
+                self.get_parameter("dare_solve_interval").value),
         )
         self._current_speed = 0.0
         self._prev_steering = 0.0  # low-pass filter state (Phase 3.2)
         self._prev_target_speed = 0.0  # speed rate-limiter state
+        # 转向输出平滑参数 (实车轮胎友好)
+        self.declare_parameter("max_steer_rate", 1.5)
+        self.declare_parameter("steer_lowpass_alpha", 0.35)
+        self.declare_parameter("state_lowpass_alpha", 0.5)
+        self._max_steer_rate = float(self.get_parameter("max_steer_rate").value)
+        self._steer_alpha = float(self.get_parameter("steer_lowpass_alpha").value)
+        self._state_alpha = float(self.get_parameter("state_lowpass_alpha").value)
         self.declare_parameter("enable_lqr", True)
         self._enable_lqr = bool(self.get_parameter("enable_lqr").value)
         self.planner_feasible = False
@@ -189,6 +204,10 @@ class PathFollowerNode(Node):
         self.declare_parameter("idle_speed", 1.0)
         self.declare_parameter("slope_comp_gain", 1.0)
         self.declare_parameter("speed_profile_max", 3.5)
+        self.declare_parameter("speed_tier", "normal")
+        self.declare_parameter("tier_slow_speed", 2.8)
+        self.declare_parameter("tier_normal_speed", 3.5)
+        self.declare_parameter("tier_fast_speed", 5.5)
         self.declare_parameter("lon_accel_step", 0.20)   # m/s per 50 ms ≈ 4.0 m/s²
         self.declare_parameter("lon_decel_step", 0.25)   # ≈ 5.0 m/s²
         self._lon_kp = float(self.get_parameter("lon_kp").value)
@@ -202,8 +221,22 @@ class PathFollowerNode(Node):
         self._dt = 0.05
         self._lon_i = 0.0
         self._lon_e_prev = 0.0
-        # Lift speed-profile ceiling to a tracking-comfortable value
-        self._speed_cfg.max_speed = float(self.get_parameter("speed_profile_max").value)
+        # Lift speed-profile ceiling to a tracking-comfortable value.
+        # speed_tier 选择直线段最大速度 (slow/normal/fast)；tier 非法时
+        # 退回 speed_profile_max 作为 fallback，保证历史兼容。
+        tier = str(self.get_parameter("speed_tier").value).strip().lower()
+        tier_speeds = {
+            "slow": float(self.get_parameter("tier_slow_speed").value),
+            "normal": float(self.get_parameter("tier_normal_speed").value),
+            "fast": float(self.get_parameter("tier_fast_speed").value),
+        }
+        if tier in tier_speeds:
+            self._speed_cfg.max_speed = tier_speeds[tier]
+        else:
+            self.get_logger().warn(
+                f"Unknown speed_tier '{tier}', falling back to speed_profile_max")
+            self._speed_cfg.max_speed = float(
+                self.get_parameter("speed_profile_max").value)
 
         # ── Finish / 终点逻辑参数 ──
         self.declare_parameter("finish_mode", "none")
@@ -291,11 +324,16 @@ class PathFollowerNode(Node):
         q = message.pose.pose.orientation
         yaw = quaternion_to_yaw(q.x, q.y, q.z, q.w)
         cos_y, sin_y = math.cos(yaw), math.sin(yaw)
+        vx_w = vx_b * cos_y - vy_b * sin_y
+        vy_w = vx_b * sin_y + vy_b * cos_y
+        # 反馈状态低通 (方案B)：降低 yaw_rate / 速度噪声对 LQR 反馈项的激励，
+        # 从源头抑制转向锯齿。alpha 越小越平滑(相位滞后越大)。
+        a = self._state_alpha
         self._odom_velocity = (
-            vx_b * cos_y - vy_b * sin_y,
-            vx_b * sin_y + vy_b * cos_y,
+            a * vx_w + (1.0 - a) * self._odom_velocity[0],
+            a * vy_w + (1.0 - a) * self._odom_velocity[1],
         )
-        self._yaw_rate = message.twist.twist.angular.z
+        self._yaw_rate = a * message.twist.twist.angular.z + (1.0 - a) * self._yaw_rate
         self._current_speed = math.hypot(vx_b, vy_b)
 
     def _obstacle_callback(self, message: MarkerArray) -> None:
@@ -340,6 +378,46 @@ class PathFollowerNode(Node):
                 })
         self._obstacles = obstacles
         self._ground_anomalies = ground
+
+    def _ground_derate(self, current_speed: float) -> float:
+        """Longitudinal derating for flat_ground (special terrain) anomalies.
+
+        Anomalies are base_link segments {x: centre (forward +), length: forward
+        extent}. The vehicle (x=0) should slow to `slow_speed` while the segment
+        overlaps the vehicle, and recover smoothly over `approach_distance` after
+        the segment's end passes behind the vehicle (x_end < 0).
+
+        Picks the *nearest* anomaly (smallest x_start) — tracks are assumed to
+        contain at most one special-terrain patch at a time. Result is clamped to
+        idle_speed so the vehicle never stalls to a halt on flat ground.
+        """
+        if not self._ground_anomalies:
+            return float("inf")
+        # nearest anomaly ahead of (or overlapping) the vehicle
+        cand = [g for g in self._ground_anomalies if g["x"] > -g["length"]]
+        if not cand:
+            return float("inf")
+        g = min(cand, key=lambda a: a["x"])
+        # Fall back to the configured default half-width when the perception
+        # group does not provide a forward extent (length), so a zero/empty
+        # length cannot collapse the anomaly to a point and break the
+        # ramp math below.
+        length = g["length"] if g["length"] > 1e-3 else 2.0 * self._flat_half_width
+        x_start = g["x"] - length / 2.0
+        x_end = g["x"] + length / 2.0
+        approach = max(0.5, self._flat_approach)
+
+        if x_end < 0.0:
+            # fully behind the vehicle → recovering
+            dist_past = -x_end
+            ramp = min(1.0, dist_past / approach)
+            return max(self._idle_speed, self._flat_slow + ramp * (current_speed - self._flat_slow))
+        if x_start <= 0.0:
+            # overlapping the vehicle now → hold slow speed
+            return max(self._idle_speed, self._flat_slow)
+        # ahead → smooth ramp-down as it approaches
+        ramp = min(1.0, (x_start) / approach)
+        return max(self._idle_speed, self._flat_slow + (1.0 - ramp) * (current_speed - self._flat_slow))
 
     def _centerline_callback(self, message: PathMessage) -> None:
         """Store centreline for terrain derating and finish-progress tracking."""
@@ -778,18 +856,27 @@ class PathFollowerNode(Node):
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = "base_link"
         message.drive.speed = float(target_speed)
-        # Steering rate limiter: max 4° per step (0.05 s) → ~80°/s
-        # Allow up to 2× rate when yaw error is large (>5°), so the
-        # vehicle can recover heading quickly after a disturbance.
-        MAX_STEER_STEP = math.radians(4.0)
-        heading_err = float(command.get("heading_error", 0.0))
-        if abs(heading_err) > math.radians(5.0):
-            MAX_STEER_STEP = math.radians(8.0)  # ~160°/s for fast recovery
+        # 转向输出平滑 (方案A, 实车轮胎友好):
+        # 1) 一阶低通 — 滤除 LQR 反馈项的高频抖动, 产出平滑渐变而非锯齿.
+        # 2) 速率限幅 — 限制每步最大变化, 即使低通残差超限也不允许猛打方向.
+        # 旧逻辑在大航向误差时放宽到 8°/步(≈160°/s), 是照片里高频反向跳变的
+        # 来源之一, 这里移除放宽, 统一用参数化的 max_steer_rate.
         raw_steer = float(command["steering"])
-        delta = raw_steer - self._prev_steering
-        clamped_delta = max(-MAX_STEER_STEP, min(MAX_STEER_STEP, delta))
-        self._prev_steering += clamped_delta
-        message.drive.steering_angle = self._prev_steering
+        # 1) 低通
+        filtered = self._steer_alpha * raw_steer + (1.0 - self._steer_alpha) * self._prev_steering
+        # 2) 速率限幅 (基于实际控制周期 dt)
+        step = self._max_steer_rate * max(self._dt, 1e-3)
+        d = filtered - self._prev_steering
+        # 3) 突变保护：DARE 重解/投影跳变等造成的阶跃式脉冲，
+        #    低通+常规速率限幅可能压不住（如 20° 跳变经低通后仍 >10°）。
+        #    当阶跃幅度超过正常步长的 2 倍时，用更紧的步长截断。
+        max_jump = step * 2.0
+        if abs(d) > max_jump:
+            tight_step = step * 0.5
+            d = max(-tight_step, min(tight_step, d))
+        d = max(-step, min(step, d))
+        self._prev_steering += d
+        message.drive.steering_angle = float(self._prev_steering)
         self.command_pub.publish(message)
 
         lookahead = PointStamped()
@@ -1131,47 +1218,6 @@ def _derate_speed_profile(
         derated[i] = min(derated[i], v_limit)
 
     return derated
-
-
-    def _ground_derate(self, current_speed: float) -> float:
-        """Longitudinal derating for flat_ground (special terrain) anomalies.
-
-        Anomalies are base_link segments {x: centre (forward +), length: forward
-        extent}. The vehicle (x=0) should slow to `slow_speed` while the segment
-        overlaps the vehicle, and recover smoothly over `approach_distance` after
-        the segment's end passes behind the vehicle (x_end < 0).
-
-        Picks the *nearest* anomaly (smallest x_start) — tracks are assumed to
-        contain at most one special-terrain patch at a time. Result is clamped to
-        idle_speed so the vehicle never stalls to a halt on flat ground.
-        """
-        if not self._ground_anomalies:
-            return float("inf")
-        # nearest anomaly ahead of (or overlapping) the vehicle
-        cand = [g for g in self._ground_anomalies if g["x"] > -g["length"]]
-        if not cand:
-            return float("inf")
-        g = min(cand, key=lambda a: a["x"])
-        # Fall back to the configured default half-width when the perception
-        # group does not provide a forward extent (length), so a zero/empty
-        # length cannot collapse the anomaly to a point and break the
-        # ramp math below.
-        length = g["length"] if g["length"] > 1e-3 else 2.0 * self._flat_half_width
-        x_start = g["x"] - length / 2.0
-        x_end = g["x"] + length / 2.0
-        approach = max(0.5, self._flat_approach)
-
-    if x_end < 0.0:
-        # fully behind the vehicle → recovering
-        dist_past = -x_end
-        ramp = min(1.0, dist_past / approach)
-        return max(self.idle_speed, self._flat_slow + ramp * (current_speed - self._flat_slow))
-    if x_start <= 0.0:
-        # overlapping the vehicle now → hold slow speed
-        return max(self.idle_speed, self._flat_slow)
-    # ahead → smooth ramp-down as it approaches
-    ramp = min(1.0, (x_start) / approach)
-    return max(self.idle_speed, self._flat_slow + (1.0 - ramp) * (current_speed - self._flat_slow))
 
 
 def main(args=None) -> None:

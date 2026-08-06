@@ -335,9 +335,20 @@ path_follower_node:
     lqr_Q: [0.05, 8.0, 2.0, 4.0, 0.5]  # [∫e_y, e_y, ė_y, e_ψ, ė_ψ]
     lqr_R: 3.0                          # 控制量惩罚（越大转向越柔和）
     lqr_v_norm: 1.5                     # 增益调度归一化速度
+    lqr_velocity_recompute_threshold: 1.0  # DARE 重解速度触发阈值 (m/s)
+    dare_solve_interval: 50             # DARE 强制重解步数间隔 (50×0.05s=2.5s)
     s_proj_lookahead: 0.8               # 参考点弧长前视 (m)
     max_steering_angle: 35.0
+    max_steer_rate: 1.2                 # 转向角速率上限 (rad/s) ≈ 69°/s
+    steer_lowpass_alpha: 0.22           # 输出一阶低通系数 (越小越平滑)
+    state_lowpass_alpha: 0.45           # 反馈状态(yaw_rate/vel)低通系数
 ```
+
+> **速率限制与突变保护**：节点层对 LQR 输出依次施加
+> （1）一阶低通 → （2）按 `max_steer_rate × dt` 的速率限幅 → （3）**突变保护**：
+> 当阶跃幅度超过正常步长的 2 倍（即 DARE 重解 / 投影跳变造成的脉冲）时，
+> 改用 0.5× 步长收紧截断。三层叠加确保前轮转角平滑、无极端阶跃，
+> 实车轮胎不会承受频繁反向急打。
 
 ### 纵向控制
 
@@ -644,6 +655,44 @@ Frenet(s,l) 双轴反馈、两级安全预警、`controller_mode` 三模式切�
 `scenario.json` 的 `length` 字段固定为 100.0，而赛道实际长 294.25 m。
 详见[性能指标](#性能指标)的说明。
 
+### 6. 多次运行残留 Gazebo 实例导致 `/clock` 冲突（RViz 全屏闪烁 + 蛇形）
+
+**现象**：RViz 中所有节点频繁闪烁，日志反复报
+`[tf2_buffer] Detected jump back in time. Clearing TF buffer.`；
+小车蛇形走位、跟踪线效果差。
+
+**根因**：`run.sh` / `run_test.sh` 未确保旧实例退出时，后台会残留多个
+`gz sim` + `ros_gz_bridge` + `robot_state_publisher`。多个 Gazebo 各自发布
+`/clock`，形成 **`/clock` 双发布者**，时钟时间戳互相冲突 → tf2 反复清空缓冲
+→ 闪烁；`path_follower` 位姿时间轴混乱 → 蛇形。
+
+**验证**：`ros2 topic info /clock` 应显示 `Publisher count: 1`；若 >1 即冲突。
+
+**修复**：所有算法节点（含 `truth_perception` / `path_follower` / `frenet_planner` /
+`actuator_adapter` / `evaluator`）现已统一设 `use_sim_time: True`，与 Gazebo
+时间源对齐；运行前务必清理残留实例：
+
+```bash
+pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
+```
+
+> 各 launch 使用固定的 `GZ_PARTITION="baja_$USER"`，多次运行若无清理会复用
+> 同一分区并叠加实例。后续可考虑每次随机 partition 或启动前自动清理。
+
+### 7. 转向平滑与 DARE 重解脉冲
+
+早期版本在弯道段出现过两类转向异常，均已修复：
+
+1. **DARE 重解阶跃脉冲**：`dare_solve_interval`（原 10 步 = 0.5 s）每个周期强制
+   重解 Riccati 方程，增益矩阵 `K` 不连续跳变，在弯道处被放大成 ±20° 转向脉冲。
+   已将间隔放宽到 **50 步（2.5 s）** 并新增**输出突变保护**（阶跃超过正常步长 2 倍时
+   用 0.5× 步长截断），详见[参数说明](#参数说明)的转向平滑项。
+2. **弯道高频锯齿抖动**：通过降低输出低通系数（`steer_lowpass_alpha` 0.35 → 0.22）
+   与收紧速率上限（`max_steer_rate` 1.5 → 1.2 rad/s）进一步平滑。
+
+个别曲率更大的弯道（如闭环第三弯）仍需要较大的必要转角，这是轨迹几何决定的
+**合理需求**，非控制不稳定——压低它会增大跟踪误差、切弯。
+
 ---
 
 ## 版本历史
@@ -715,6 +764,25 @@ Frenet(s,l) 双轴反馈、两级安全预警、`controller_mode` 三模式切�
 8. **障碍原点杂波过滤**——`frenet_planner` 与 `path_follower` 新增 `min_obstacle_range`
    参数（默认 0.5 m），过滤传感器原点附近的虚假 `tall`/`flat_ground` 检测（车体自身/
    地面杂波），作为一般性鲁棒性守卫，与第 7 条相互独立。
+
+### v2.2 稳定性与转向平滑补丁（本版累计）
+
+针对实车移植前的对接联调，额外补齐以下修复（均在 v2.2 分支内）：
+
+1. **`use_sim_time` 统一**——`truth_perception` / `path_follower` / `frenet_planner` /
+   `actuator_adapter` / `evaluator` 全部在 launch 中显式设 `use_sim_time: True`，
+   与 Gazebo（`ros_gz_bridge` / `robot_state_publisher`）时间源对齐。此前未设的节点
+   用墙钟时间发布位姿，与仿真时间错位导致 tf2 反复报 `jump back in time`、RViz 全屏
+   闪烁、控制位姿混乱引发蛇形。详见[已知问题 #6](#6-多次运行残留-gazebo-实例导致-clock-冲突riviz-全屏闪烁--蛇形)。
+2. **`_ground_derate` 缩进 bug 修复**——原 `_ground_derate`（特殊地面降速）误嵌在
+   `_derate_speed_profile` 的 `return` 之后，成为不可达死代码且缩进错乱，导致
+   `self._ground_derate(...)` 在收到 `flat_ground` 障碍时抛 `AttributeError` 使控制崩溃；
+   已正确挂回类方法，并修正 `self.idle_speed` → `self._idle_speed` 笔误。
+3. **DARE 重解脉冲消除 + 转向平滑**——`dare_solve_interval` 10 → **50**（重解周期
+   0.5 s → 2.5 s）；新增**输出突变保护**层（阶跃超正常步长 2 倍时用 0.5× 步长截断）；
+   收紧 `steer_lowpass_alpha` 0.35 → 0.22、`max_steer_rate` 1.5 → 1.2 rad/s、
+   `state_lowpass_alpha` 0.5 → 0.45。弯道段转向变化率峰值由 ~105°/s 降至 ~50°/s 以内，
+   无极端阶跃。详见[已知问题 #7](#7-转向平滑与-dare-重解脉冲) 与[参数说明](#参数说明)。
 
 ### v2 相对 v1.5 的变更
 
