@@ -784,6 +784,25 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
    `state_lowpass_alpha` 0.5 → 0.45。弯道段转向变化率峰值由 ~105°/s 降至 ~50°/s 以内，
    无极端阶跃。详见[已知问题 #7](#7-转向平滑与-dare-重解脉冲) 与[参数说明](#参数说明)。
 
+### v2.2 代码清理（屎山治理）
+
+1. **删除遗留的 `core.py`（1077 行）**——算法实现早已迁移到 `core/` 子包
+   （`controller.py` / `planner.py` / `track.py` / `geometry.py` / `terrain.py`），
+   原 `core.py` 成为与子包**重复实现**的桥接残留，且内含 `stanley_path_control` /
+   `lqr_path_control` 等**死代码**（仅被旧 import 引用，node 层从未调用）。
+   删除后 `baja_cloud_sim.core` 自动解析到 `core/` 包，`core/__init__.py` 的
+   re-export 已覆盖全部外部符号（`legacy_path_control`、`signed_lateral`、
+   `terrain_height` 等），删除安全。
+2. **拆分 `path_follower_node.py` 的 `_control` 超级方法（278 行）**——原方法揉合了
+   finish watchdog、infeasible 守卫、LQR/纯追踪分发、速度 PID、安全状态机、转向输出
+   等多职责，且 finish pre-check 时序耦合脆弱（大量"绕坑"注释）。
+   拆分为四个职责清晰的方法：
+   - `_guard_finish_and_infeasible()`：finish watchdog / pre-check / infeasible 计数 / 硬停车守卫
+   - `_compute_lateral_command()`：LQR 主 + 纯追踪 fallback 横向控制
+   - `_compute_longitudinal_target()`：速度剖面 → finish 限速 → 地形降速 → PID → 安全状态机 → 加加速度限幅
+   - `_publish_actuation()`：转向平滑（低通 + 速率限幅 + 突变保护）+ 发布 Ackermann + lookahead marker
+   - `_control()` 退化为编排层（约 35 行）。拆分后逻辑等价，已实跑验证无 AttributeError。
+
 ### v2 相对 v1.5 的变更
 
 1. **执行器滞后修复**（`model.sdf`）——放宽 `AckermannSteering` 的 accel/jerk 限幅，

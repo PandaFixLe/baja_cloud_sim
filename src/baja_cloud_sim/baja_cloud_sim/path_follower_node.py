@@ -611,10 +611,35 @@ class PathFollowerNode(Node):
         self.command_pub.publish(message)
 
     def _control(self) -> None:
+        """Control-loop orchestrator.
+
+        Delegates to focused helpers for each responsibility:
+        finish/infeasible guarding → lateral command → longitudinal target
+        → actuation publishing.  Keeping this method thin prevents the
+        timing-coupled finish/braking exemptions from tangling with the
+        compute steps below.
+        """
         if self.position is None:
             self._publish_stop()
             return
 
+        should_stop, effective_path, braking_to_stop, track_err = \
+            self._guard_finish_and_infeasible()
+        if should_stop:
+            return
+
+        command = self._compute_lateral_command(effective_path)
+        target_speed = self._compute_longitudinal_target(
+            command, braking_to_stop, track_err)
+        self._publish_actuation(command, target_speed)
+
+    def _guard_finish_and_infeasible(self):
+        """Handle finish watchdog, finish pre-check, planner-infeasible
+        bookkeeping and all hard-stop guards.
+
+        Returns ``(should_stop, effective_path, braking_to_stop, track_err)``.
+        ``should_stop`` is True when a guard already published a stop command.
+        """
         # Global finish watchdog (safety net if the trigger never fires).
         if (not self._finished and self._finish_mode != "none"
                 and (self.get_clock().now() - self._finish_watchdog_t0).nanoseconds / 1e9
@@ -623,22 +648,17 @@ class PathFollowerNode(Node):
             self._finish_pub.publish(String(data="FINISHED"))
             self.get_logger().warn("Finish watchdog triggered (max duration exceeded).")
             self._publish_stop()
-            return
+            return True, self.path, False, 0.0
 
-        # Freewheel: if planner reports infeasible, keep using the last
-        # valid path for up to ~300 ms (6 cycles @ 20 Hz) before stopping.
-        # Before the first planner status arrives the vehicle is still
-        # stationary — don't count those cycles as infeasible.
-
-        # ── Finish pre-check (must run BEFORE the infeasible-stop guards) ──
+        # ── Finish pre-check (runs BEFORE the infeasible-stop guards) ──
         # When the graceful finish is actively braking the car to a stop, the
         # planner deliberately returns INFEASIBLE near the end of the track
-        # ("goal reached").  If we let the infeasible guards below call
-        # _publish_stop() the car is yanked to a halt by an emergency stop
-        # instead of coasting to stop_s — and the FINISHED latch (which only
-        # runs further down) is skipped entirely, so `fin` stays False forever.
-        # So compute the finish state up front and exempt the braking-to-stop
-        # case from every hard stop guard in this routine.
+        # ("goal reached").  If we let the infeasible guards call _publish_stop()
+        # the car is yanked to a halt by an emergency stop instead of coasting
+        # to stop_s — and the FINISHED latch (which only runs further down) is
+        # skipped entirely, so `fin` stays False forever.  So compute the
+        # finish state up front and exempt the braking-to-stop case from every
+        # hard-stop guard in this routine.
         if self._finish_mode != "none":
             self._update_progress()
             self._update_finish_arm()
@@ -684,21 +704,27 @@ class PathFollowerNode(Node):
                 effective_path = self._last_valid_path
             else:
                 self._publish_stop()
-                return
+                return True, effective_path, braking_to_stop, track_err
 
         if self.last_path_time is not None:
             age_ns = (self.get_clock().now() - self.last_path_time).nanoseconds
             if age_ns > 400_000_000 and not braking_to_stop:
                 self._publish_stop()
-                return
+                return True, effective_path, braking_to_stop, track_err
 
         if len(effective_path) < 2:
             if braking_to_stop and len(self._last_valid_path) >= 2:
                 effective_path = self._last_valid_path
             else:
                 self._publish_stop()
-                return
+                return True, effective_path, braking_to_stop, track_err
 
+        return False, effective_path, braking_to_stop, track_err
+
+    def _compute_lateral_command(self, effective_path):
+        """Lateral control: Apollo-style LQR + feed-forward (primary), pure
+        pursuit fallback.  Returns the command dict (steering + diagnostics).
+        """
         # ── Lateral control: Apollo-style LQR + feed-forward (primary) ──
         # Pure pursuit is used ONLY as a fallback when LQR is unavailable
         # (disabled, vehicle too slow, or no reference curvature).
@@ -756,17 +782,23 @@ class PathFollowerNode(Node):
             )
             command = pp_command
 
-        # Clamp steering to actuator limit (rate/low-pass applied below)
+        # Clamp steering to actuator limit (rate/low-pass applied in publishing step)
         command["steering"] = clamp(
             float(command["steering"]),
             -self._lqr_cfg.max_steering, self._lqr_cfg.max_steering,
         )
+        return command
 
+    def _compute_longitudinal_target(self, command, braking_to_stop, track_err) -> float:
+        """Longitudinal target speed: speed-profile reference → finish cap →
+        flat_ground derate → PID → slope comp → idle floor → safety state
+        machine → accel/jerk limiter.  Returns the final target speed (m/s).
+        """
         # ── Longitudinal control: cascaded PID tracking curvature profile ──
         # Replaces the old non-hysteretic e_y/yaw speed-cap (limit-cycle source).
         v_ref = float(command["speed"])
         if self._use_speed_profile and len(self._speed_profile) > 0:
-            nearest = _closest_index(effective_path, self.position)
+            nearest = _closest_index(self.path, self.position)
             if nearest < len(self._speed_profile):
                 v_ref = self._speed_profile[nearest]
                 if self._diag_tick < 20:
@@ -776,10 +808,10 @@ class PathFollowerNode(Node):
                         f'actual={self._current_speed:.1f}')
 
         # ── Finish / 终点逻辑：锚定停车目标，平滑减速至停止 ──
-        # NOTE: _update_progress / _update_finish_arm already ran early in this
-        # method (see "Finish pre-check") so the infeasible-stop guards above
-        # could exempt the braking-to-stop case.  Re-running them here would be
-        # redundant; we only apply the cap and the FINISHED latch now.
+        # NOTE: _update_progress / _update_finish_arm already ran early in
+        # _guard_finish_and_infeasible() so the infeasible-stop guards could
+        # exempt the braking-to-stop case.  We only apply the cap + FINISHED
+        # latch here.
         if self._finish_mode != "none":
             if self._finished:
                 v_ref = 0.0  # hold once stopped (prevents re-accel on loop / early stop)
@@ -829,11 +861,6 @@ class PathFollowerNode(Node):
         # the off-track floor (forces v >= 2.0 m/s) — both prevent the speed from
         # ever reaching ~0, so FINISHED never latches and the car rolls off the
         # track.  When braking to stop we let the finish cap drive v down to 0.
-        braking_to_stop = (
-            self._finish_mode != "none"
-            and self._finish_armed
-            and self._cl_s >= self._finish_s
-        )
         if not braking_to_stop:
             # Safety: state machine (gentle, decoupled from small lateral error)
             if self._ctrl_state == _ControlState.EMERGENCY:
@@ -850,8 +877,11 @@ class PathFollowerNode(Node):
         delta_spd = v_target - self._prev_target_speed
         clamped_spd = clamp(delta_spd, -self._lon_decel_step, self._lon_accel_step)
         self._prev_target_speed += clamped_spd
-        target_speed = self._prev_target_speed
+        return self._prev_target_speed
 
+    def _publish_actuation(self, command, target_speed) -> None:
+        """Apply steering smoothing (low-pass + rate limit + spike guard),
+        publish the Ackermann command and the lookahead marker."""
         message = AckermannDriveStamped()
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = "base_link"
