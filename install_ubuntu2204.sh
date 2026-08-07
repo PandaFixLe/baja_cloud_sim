@@ -55,6 +55,15 @@ sudo apt-get install -y \
   mesa-utils \
   ffmpeg
 
+# Perception-group dependencies (lidar3d_bringup / patchwork++ / lidar_cluster_ros2).
+# PCL is required to build the C++ perception packages; transforms3d is used by
+# the Python perception nodes (e.g. obstacle_adapter / tf_bridge).
+sudo apt-get install -y \
+  ros-humble-pcl-ros \
+  libpcl-dev \
+  ros-humble-tf-transformations \
+  python3-transforms3d
+
 # Optional remote desktop components used by start_remote_rviz.sh.
 sudo apt-get install -y xvfb x11vnc fluxbox novnc websockify
 

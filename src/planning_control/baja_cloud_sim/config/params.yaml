@@ -1,0 +1,130 @@
+truth_perception_node:
+  ros__parameters:
+    use_sim_time: true
+    perception_forward: 34.0
+    perception_backward: 6.0
+    localization_position_stddev_m: 0.015
+    localization_altitude_stddev_m: 0.020
+    localization_yaw_stddev_deg: 0.12
+    # Phase-0 platform remap: simulation reads Gazebo ground-truth odometry.
+    # On the real car this node is replaced by a real localization node.
+    ground_truth_odom_topic: "/ground_truth/odom"
+
+frenet_planner_node:
+  ros__parameters:
+    use_sim_time: true
+    origin_latitude: 30.0
+    origin_longitude: 114.0
+    horizon_m: 30.0
+    center_weight: 1.0
+    clearance_weight: 12.0
+    desired_clearance: 1.2
+    vehicle_length: 3.0
+    vehicle_width: 1.5
+    # 忽略传感器原点附近(车体自身/地面杂波)的虚假障碍检测，避免起点附近出现幽灵膨胀框
+    min_obstacle_range: 0.5
+
+path_follower_node:
+  ros__parameters:
+    use_sim_time: true
+    origin_latitude: 30.0
+    origin_longitude: 114.0
+    target_speed: 2.5
+    lookahead_distance: 3.0
+    kp_heading: 1.0
+    max_steering_angle: 26.0
+    use_speed_profile: true
+    desired_clearance: 3.5
+    min_speed_obstacle: 2.0
+    lqr_R: 3.0
+    lqr_v_norm: 1.5
+    lqr_Q: [0.05, 8.0, 2.0, 4.0, 0.5] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] (恢复基线: B加倍阻尼破坏直道, 回退)
+    # 方案 G: 反馈项速度自适应软化. 高速时小误差不应激进修, 防止放大成蛇形.
+    # beta(v) = 1/(1+alpha*(v-v_ref)), 饱和到 [beta_min, 1.0]. alpha=0 关闭.
+    fb_speed_soften_alpha: 0.6        # J1: 削弱 0.3→0.6, 高速直道反馈强度减半防残差累积爆发
+    fb_speed_ref: 2.5                  # 低于此速度 beta=1.0(不软化)
+    fb_speed_beta_min: 0.4             # J1: beta 下限 0.5→0.4, 高速反馈弱化至 40%
+    e_psi_ma_window: 5               # K1: e_psi 移动平均窗口(控制周期数, 5≈0.25s), 滤除参考点跳变引起的 e_psi 阶跃
+    # ── 转向输出平滑 (实车轮胎友好，避免高频极端反向) ──
+    lqr_max_steering: 0.4538         # LQR 输出幅值上限 (rad)，对齐 max_steering_angle=26°
+    lqr_velocity_recompute_threshold: 1.0  # DARE 重解阈值 (放宽，减少速度波动触发重解)
+    dare_solve_interval: 50              # DARE 强制重解步数间隔 (50×0.05s=2.5s，减少 K 跳变频率)
+    max_steer_rate: 1.2              # 控制器侧转向速率上限(rad/s≈68°/s) — 宽松, 让 LQR 修正指令完整到达 EPS; 真实齿条 15°/s 约束由 EPS(actuator_adapter)施加, 此处不重复限速(重复限速会废掉修正能力)
+    steer_lowpass_alpha: 0.5         # 输出一阶低通系数, 0.5 较 0.22 大幅减重相位滞后, 避免平滑吃掉纠偏高频分量导致蛇形
+    state_lowpass_alpha: 0.45        # 反馈状态(yaw_rate/vel)低通系数 — 0.25 会过度滞后破坏弯道
+                                      # 响应(0.2s 滞后吃掉 LQR 相位裕度导致弯道饱和), 回退至 0.45;
+                                      # 直道稳态抖动改由 EPS 输出端绝对死区(eps_output_deadband_deg)治理
+    cmd_steer_deadband_deg: 1.5      # J3+K3: 指令端绝对死区(deg) — 平滑后转向指令<1.5°强制归零,
+                                      # 配合 EPS 死区1°+输出死区0.5° 共3°小角度不响应区间, 吃掉中等抖动
+    s_proj_lookahead: 0.8
+    max_lateral_accel: 1.2                # 弯道侧向加速度上限(m/s²) — 你实跑验证过能过弯的值, 回退自1.6(1.6自跑反而出界更重)
+    curvature_lookahead_m: 3.0            # 曲率前瞻距离(m): 出弯加速延后防弯切直蛇形, 0=关闭(用当前点曲率)
+    terrain_slope_threshold: 0.06
+    terrain_min_speed: 1.0
+    use_terrain_profile: false       # 实车对接感知后统一由 flat_ground 障碍物处理地形降速
+    enable_lqr: true
+    # ── 障碍物分类控制（感知组通过 /obstacle_markers 的 ns 区分类型）──
+    # tall:         高障碍物，必须横向避让 + 按 clearance 减速
+    # flat_ground:  特殊地面(土坡/减速带)，直线通过 + 平滑降速，不横向避让
+    obstacle_classes:
+      tall:
+        lateral_avoid: true
+        desired_clearance: 1.5
+        min_speed: 1.5
+      flat_ground:
+        lateral_avoid: false
+        approach_distance: 5.0      # 提前/过后对称平滑过渡距离 (m)
+        slow_speed: 2.0             # 通过特殊地面时的目标速度 (m/s)
+        default_half_width: 0.9     # tall 默认包围盒半宽兜底 (车宽1.5*0.6)
+    # 忽略传感器原点附近(车体自身/地面杂波)的虚假障碍检测，避免起点附近幽灵膨胀框
+    min_obstacle_range: 0.5
+
+    # ── Longitudinal cascaded-PID (Apollo-style) ──
+    lon_kp: 2.0
+    lon_ki: 0.5
+    lon_kd: 0.2
+    lon_i_limit: 2.0
+    idle_speed: 1.0
+    slope_comp_gain: 1.0
+    # ── 速度档位 (speed tier) ──
+    # 仅调直线段最大速度，弯道/避障/地形降速逻辑不动。
+    # slow≈均速2.5 / normal≈均速3.5 / fast≈均速4.5
+    speed_tier: "normal"          # slow | normal | fast
+    tier_slow_speed: 2.5          # slow 档：直线段最大速度
+    tier_normal_speed: 3.5        # normal 档：直线段最大速度
+    tier_fast_speed: 4.5          # fast 档：直线段最大速度
+    speed_profile_max: 3.5        # fallback/历史兼容：tier 非法时退回此值
+    lon_accel_step: 0.20   # m/s per 50 ms ≈ 4.0 m/s²
+    lon_decel_step: 0.25   # ≈ 5.0 m/s²
+    # ── Finish / 终点逻辑（line | circle | time | none） ──
+    finish_mode: "none"            # none | line | circle | time
+    finish_runout_m: 20.0          # 冲过终点后再 20m 停车区
+    finish_decel: 1.5              # 减速停车减速度（≤ lon_decel_step 等效 5，更丝滑）
+    finish_s: -1.0                 # -1=自动(闭环→0 / 开放赛道→总长-runout)
+    finish_target_lap: 1           # circle 仅用：跑满几圈后停
+    finish_time_limit_s: 1200.0    # time 仅用：20 min
+    finish_max_duration_s: 600.0   # 全局安全看门狗（防触发失效无限跑）
+
+actuator_adapter_node:
+  ros__parameters:
+    use_sim_time: true
+    wheelbase: 1.43
+    command_timeout: 0.35
+    # EPS actuator model (see real_car_params_regulation.md §物理参数对齐)
+    # eps_tau 设 0：Gazebo ackermann 插件已自带真实物理转向响应(~80ms, 关节
+    # accel/jerk 限制 + 轮胎摩擦)，再叠 0.1s 软件滞后等于重复建模，会放大蛇形。
+    # 保留 12°/s 齿条转速上限 + 1° 死区 —— 这两项是 Gazebo 不建模的真实硬件约束，
+    # 才是该用 EPS 模型验证的核心。
+    eps_tau: 0.0                 # 一阶滞后时间常数 (s) → 0: 依赖 Gazebo 物理响应
+    eps_max_rate_deg: 15.0       # 齿条最大转速 (deg/s) → 满打 26° 约 1.7 s (真实约束, 15 为拟合值)
+    eps_deadband_deg: 1.0        # 死区 (deg)，消除小幅抖动/传感器噪声
+    eps_output_deadband_deg: 0.5 # 输出端绝对死区 (deg): 最终齿条角绝对值<0.5° 强制归零,
+                                  # 治理直道稳态高频抖动(LQR 0° 附近残差放大), 弯道≥2°正常突破
+    # Phase-0 platform remaps (real-car port):
+    # simulation → Gazebo vehicle; real car → chassis driver topic.
+    cmd_vel_topic: "/model/baja_vehicle/cmd_vel"
+    odom_topic: "/ground_truth/odom"
+
+evaluator_node:
+  ros__parameters:
+    use_sim_time: true

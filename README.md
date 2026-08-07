@@ -184,13 +184,15 @@ Gazebo OdometryPublisher（世界真值位姿）
        ├─ truth_perception ──┬─ /localization/odom
        │                     ├─ /gps/fix
        │                     ├─ /imu/yaw
-       │                     ├─ /reference_centerline
-       │                     └─ /road_boundary_markers
+       │                     └─ /reference_centerline
        └─ evaluator ─────────── results/seed_N/tracking_*.csv
 
-感知组 Gazebo 雷达（实车传感器在仿真中的部署）
-  └─ /obstacle_markers  (base_link, CUBE, ns=tall | flat_ground)
-       ↑ 雷达直接检测 Gazebo 中的物理障碍盒 / 轮胎，不依赖真值注入
+感知组 LiDAR 管道（lidar3d_bringup + patchwork++ + lidar3d_perception_cpp，实车传感器在仿真中的部署）
+  ├─ Gazebo gpu_lidar ── /lidar/points
+  │    └─ pointcloud_filter → patchworkpp → surface_detector (C++) → obstacle_adapter
+  │         └─ /obstacle_markers  (base_link, CUBE, ns=tall | flat_ground)
+  └─ road_analyzer ───── /road_boundary_markers (base_link, LINE_STRIP, ns=road_left/road_right)
+       ↑ 雷达/点云直接检测 Gazebo 中的物理障碍盒 / 轮胎 / 边界，不依赖真值注入
 
 frenet_planner (10 Hz)
   ├─ /planned_path      (nav_msgs/Path, 绿色)
@@ -563,9 +565,91 @@ frenet_planner_node:
 
 ---
 
+## 感知组子系统（Perception，对接融合）
+
+感知组在仿真中部署了实车 LiDAR 传感器链路，替代 `truth_perception` 发布
+`/road_boundary_markers`，并提供 `/obstacle_markers`。本仓库已将其源码并入
+`src/perception/`，并在 `simulation.launch.py` 中通过 `lidar_sim.launch.py`
+一键拉起（见下文启动方式）。以下为其节点关系与契约（提炼自感知组文档）。
+
+### 节点关系图
+
+```text
+Gazebo gpu_lidar (baja_vehicle/base_link/lidar)
+   └─ /lidar/points (PointCloud2)
+        │
+        ▼ pointcloud_filter (lidar3d_bringup, Python)
+   /lidar/points_filtered (降采样, 下游按需再降)
+        │
+        ├─► /cx/lslidar_point_cloud_filtered ─► patchworkpp (patchwork-plusplus, C++)
+        │                                           └─► /ground_seg/points/ground (地面点)
+        │                                                └─► ground_filter (lidar3d_bringup, Python)
+        │                                                     └─► /lidar/obstacle_points (非地面点)
+        │
+        └─► surface_detector (lidar3d_perception_cpp, C++, 订阅 /lidar/points_filtered)
+             ├─► /lidar/road_boundary_markers (base_link, LINE_STRIP, ns=road_left/road_right)
+             └─► /lidar/obstacle_markers      (base_link, CUBE, ns=tall | flat_ground)
+
+road_analyzer        (lidar3d_bringup, Python, 订阅 /lidar/road_boundary_markers)
+   └─► /road_boundary_markers  (重映射, base_link, LINE_STRIP, ns=road_left/road_right)
+obstacle_adapter     (lidar3d_bringup, Python, 订阅 /lidar/obstacle_markers)
+   └─► /obstacle_markers       (重映射, base_link, CUBE, ns=tall | flat_ground)
+```
+
+> 注：`patchworkpp` 等 C++ 节点当前以 `use_sim_time=false` 构建消息，但 lidar_sim
+> 启动时会按 `use_sim_time` 条件重映射 `/clock` 并修正其时间戳，使其在仿真下可用。
+> 感知管道发布的 Marker 帧统一为 `base_link`（相对车体），与算法核心契约一致。
+
+### 包清单（`src/perception/`）
+
+| 包 | 语言 | 角色 | 关键节点 |
+|----|------|------|----------|
+| `lidar3d_bringup` | Python | 启动编排 + Python 辅助节点 | `pointcloud_filter`、`ground_filter`、`road_analyzer`、`obstacle_adapter`、`tf_bridge`、`start_gazebo` |
+| `lidar3d_perception_cpp` | C++ | 点云→边界/障碍主检测 | `surface_detector` |
+| `lidar_cluster_ros2` | C++（第三方 fork） | 欧氏聚类 | `lslidar_cluster` |
+| `patchwork-plusplus` | C++（第三方 fork） | 地面分割 | `patchworkpp` |
+
+### 话题契约（与算法核心对齐，已校验一致）
+
+| 话题 | 帧 | 类型 / `ns` | 算法核心如何使用 |
+|------|------|------------|--------------|
+| `/road_boundary_markers` | `base_link` | `LINE_STRIP`，`ns=road_left` / `road_right` | planner 转世界系做走廊；follower 做限速 |
+| `/obstacle_markers` | `base_link` | `CUBE`，`ns=tall` | planner 取 tall 做横向走廊膨胀；follower 做动态减速 |
+| `/obstacle_markers` | `base_link` | `CUBE`，`ns=flat_ground` | follower 做纵向降速直线通过；planner 跳过 |
+
+其余 `/gps/fix`、`/imu/yaw`、`/localization/odom`、`/reference_centerline` 仍由本仓库
+`truth_perception_node` 从 Gazebo 真值发布（**边界已退役**，仅保留定位/参考线）。
+
+### 启动方式（一键）
+
+感知管道已并入 `simulation.launch.py`，因此你原有的 `./run.sh`、`run_test.sh`、
+`run_line.sh`（circle/time 等模式）**一个命令即同时拉起规划-控制与感知**。
+如需单独调试感知，也可在仿真运行后另开终端：
+
+```bash
+# 仅单独拉起感知管道（仿真已在运行）
+ros2 launch lidar3d_bringup lidar_sim.launch.py
+```
+
+### 依赖
+
+感知组 C++ 包需 PCL，已在 `install_ubuntu2204.sh` 补装
+`ros-humble-pcl-ros`、`libpcl-dev`、`python3-transforms3d`、`ros-humble-tf-transformations`。
+干净环境请重新执行安装脚本；你本地历史环境若已具备可跳过。
+
+> **LiDAR 传感器**：已在车辆模型 `models/baja_vehicle/model.sdf` 的 `base_link` 上
+> 挂载 `gpu_lidar`（高 1.5 m，frame 解析为 `baja_vehicle/base_link/lidar`，发布
+> `/lidar/points` 经 `config/bridge.yaml` 转发），参数（1800×16 线、±π 水平、±15°
+> 垂直、200 m 量程）沿用感知组仿真设定，使端到端链路可在同一 Gazebo 世界内跑通。
+
+---
+
 ## 代码结构
 
-算法包位于 `src/baja_cloud_sim/baja_cloud_sim/`。
+算法包现按职责分为 `src/planning_control/` 与 `src/perception/` 两类。
+
+- **规划-控制核心**：`src/planning_control/baja_cloud_sim/baja_cloud_sim/`
+- **感知组子系统**：`src/perception/`（见上节）
 
 ### 活跃代码
 
