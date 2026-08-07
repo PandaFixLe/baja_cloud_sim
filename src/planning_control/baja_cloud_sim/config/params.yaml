@@ -9,6 +9,9 @@ truth_perception_node:
     # Phase-0 platform remap: simulation reads Gazebo ground-truth odometry.
     # On the real car this node is replaced by a real localization node.
     ground_truth_odom_topic: "/ground_truth/odom"
+    # 车道线真值开关默认值 false；实际由 simulation.launch.py 按 use_perception
+    # 动态覆盖(感知关→true 发真值, 感知开→false 交给 road_analyzer, 避免双发布冲突)。
+    publish_ground_truth_boundary: false
 
 frenet_planner_node:
   ros__parameters:

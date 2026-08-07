@@ -40,6 +40,13 @@ class TruthPerceptionNode(Node):
         # On the real car this node is replaced by a real localization node, so
         # this parameter is only relevant in simulation.
         self.declare_parameter("ground_truth_odom_topic", "/ground_truth/odom")
+        # When true, publish scenario ground-truth road boundaries on
+        # /road_boundary_markers as a fallback.  Defaults to false so the
+        # perception group's road_analyzer (lidar3d_bringup) remains the sole
+        # publisher of /road_boundary_markers — two publishers on the same topic
+        # would create a conflicting / flickering corridor for the planner.
+        # Enable only for debugging when the LiDAR lane-edge detection is down.
+        self.declare_parameter("publish_ground_truth_boundary", False)
         scenario_file = self.get_parameter("scenario_file").get_parameter_value().string_value
         if not scenario_file:
             raise RuntimeError("scenario_file parameter is required")
@@ -200,14 +207,20 @@ class TruthPerceptionNode(Node):
         # sparse LiDAR.  In lidar_sim.launch.py, road_analyzer's boundary topic
         # is NOT remapped here (perception_mode defaults to 'truth' in
         # simulation.launch.py), so there is no conflict.
-        boundary_array = MarkerArray()
-        boundary_array.markers.append(
-            self._boundary_marker(self.scenario["left_boundary"], "road_left", 0, (0.10, 0.85, 1.0, 1.0))
-        )
-        boundary_array.markers.append(
-            self._boundary_marker(self.scenario["right_boundary"], "road_right", 1, (0.10, 0.85, 1.0, 1.0))
-        )
-        self.boundary_pub.publish(boundary_array)
+        # Ground-truth road boundaries (from scenario file).  Normally NOT
+        # published here: the perception group's road_analyzer is the single
+        # authoritative publisher of /road_boundary_markers in lidar mode.
+        # Only publish when publish_ground_truth_boundary is enabled (debug
+        # fallback for when the LiDAR lane-edge detection is unavailable).
+        if self.get_parameter("publish_ground_truth_boundary").value:
+            boundary_array = MarkerArray()
+            boundary_array.markers.append(
+                self._boundary_marker(self.scenario["left_boundary"], "road_left", 0, (0.10, 0.85, 1.0, 1.0))
+            )
+            boundary_array.markers.append(
+                self._boundary_marker(self.scenario["right_boundary"], "road_right", 1, (0.10, 0.85, 1.0, 1.0))
+            )
+            self.boundary_pub.publish(boundary_array)
 
         # NOTE: obstacles (and edge tires) are NOT published on /obstacle_markers
         # from here. The perception group's own Gazebo-mounted radar detects the

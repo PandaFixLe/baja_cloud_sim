@@ -32,15 +32,16 @@ pointcloud_filter:
   ros__parameters:
     # 距离过滤
     max_range: 30.0                  # 最大距离 (m). 16线建议≤25m, >30m点云过于稀疏
-    min_range: 2.0                   # 最小距离 (m), 过滤车辆自身反射点
-                                     # (lidar 在 base_link 前 0.5m/高 1.5m，自身反射在 0-2m)
+    min_range: 1.5                   # 最小距离 (m), 过滤自车/前置小雷达的近场反射
+                                  # (车前方 0-1.5m 的车体/小雷达会被误识别为 tall 障碍导致不动)
+                                  # 取 1.5 而非更高, 保留 1.5m 外的近场障碍与边界点
 
     # 高度过滤
     min_height: -3.0                 # 最低高度 (m), 负值=传感器下方
     max_height: 5.0                  # 最高高度 (m)
 
     # 角度过滤 (方向性感知)
-    angle_limit_deg: 135.0           # 水平半角限制 (度)
+    angle_limit_deg: 150.0           # 水平半角限制 (度)
                                      # 135°=保留前方±135°(去后方90°)
                                      # 180°=全向360°扫描
 
@@ -78,6 +79,20 @@ surface_detector:
     # 剔除"高于median + k×MAD"的ground点，捕获为疑似障碍物参与检测。
     # ↓=捕获更多疑似障碍物(更敏感, 斜面上障碍物易检出), ↑=更宽松(抑制误检)
     ground_outlier_factor: 2.0
+
+    # ==== 坡面地形 (ground → flat_ground) ====
+    # 只使用 Patchwork++ 已确认的 ground 拟合局部纵向平面；不参与 tall 分类。
+    # `slope_min_grade_deg` 是传感器估计角度而非仿真配置坡角；小坡可按实测调低。
+    slope_grid_resolution_m: 0.5     # 地面高度栅格边长 (m)
+    slope_fit_radius_m: 1.5          # 每个局部平面拟合半径 (m)
+    slope_min_grade_deg: 1.5         # 最小纵向坡度 (deg)
+    slope_max_grade_deg: 18.0        # 最大可通行坡度 (deg)
+    slope_min_support_cells: 8       # 局部平面最少地面栅格数
+    slope_max_fit_rmse_m: 0.08       # 平面拟合最大均方根误差 (m)
+    slope_min_component_cells: 6     # 连续坡面最少栅格数
+    slope_min_span_x_m: 2.0          # 控制组可用的最小 x 向坡长 (m)
+    slope_min_forward_m: 0.5         # 仅发布车辆前方坡面起点 (m)
+    slope_max_forward_m: 30.0        # 坡面最远发布距离 (m)
 
     # ==== 近场曲面NaN修复 ====
     # Patchwork++盲区(min_range=1.0) + 16线近场(<5.6m)打不到地面 → 曲面NaN。
@@ -145,13 +160,18 @@ road_analyzer:
   ros__parameters:
     min_forward: 1.0                 # 忽略车身附近的障碍物 (m)
     max_forward: 30.0                # 前方道路边界的最大检测距离 (m)
-    min_lateral: 0.75                # 忽略接近车道中心的障碍物 (m)
+    min_lateral: 0.2                 # 忽略接近车道中心的障碍物 (m)
+                                    # ↓ 从 0.75 放宽, 稀疏16线点云下小反射也算边界侧
     forward_bin_size: 0.5            # 沿车辆前进方向的采样间隔 (m)
-    min_road_width: 3.0              # 左右障碍物构成道路的最小宽度 (m)
-    max_road_width: 12.0             # 左右障碍物构成道路的最大宽度 (m)
+    min_road_width: 0.8              # 左右障碍物构成道路的最小宽度 (m)
+                                    # ↓ 从 3.0 放宽, 容纳窄道/稀疏单侧
+    max_road_width: 10.0             # 左右障碍物构成道路的最大宽度 (m)
+                                    # ↑ 从 12.0 略收, 避免过宽误连路侧
     road_width_tolerance: 1.5        # 相对中位道路宽度的允许变化 (m)
     max_lateral_step: 1.5            # 相邻 0.5m 采样的最大横向跳变 (m)
     min_points_per_side: 2           # 单个纵向采样内每侧所需最少障碍点数
+                                    # ↓ 从 5 放宽, 稀疏点云下单侧2点即认可,
+                                    #   避免 bin 因点数不足被整段丢弃 (left/right 常仅2对)
     smooth_window: 5                 # 车道线中值平滑窗口
     cache_duration_ms: 2000          # 世界坐标缓存时长 (ms)
     world_frame: "map"               # 缓存参考坐标系

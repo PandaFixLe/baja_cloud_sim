@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Obstacle-free test map — identical to run.sh except no box obstacles.
+# 默认关闭 LiDAR 感知(use_perception=false)，由 truth_perception 发车道线真值，
+# 仅用规划控制核心跑(单独验证算法用)。加 --with-perception 可恢复完整感知链路。
 # Safe to run concurrently with ./run.sh (separate GZ partition & results).
 set -eo pipefail
 
@@ -9,6 +11,7 @@ USE_RVIZ=true
 USE_GZ_GUI=true
 USE_VIDEO=true
 FINISH_MODE="none"
+USE_PERCEPTION=false   # 默认关感知，专测规划控制
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seed) SEED="$2"; shift 2 ;;
@@ -16,6 +19,7 @@ while [[ $# -gt 0 ]]; do
     --no-rviz) USE_RVIZ=false; shift ;;
     --headless-gazebo) USE_GZ_GUI=false; shift ;;
     --no-video) USE_VIDEO=false; shift ;;
+    --with-perception) USE_PERCEPTION=true; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -47,6 +51,7 @@ ros2 launch baja_cloud_sim simulation.launch.py \
   scenario_file:="$GENERATED/loop_scenario.json" \
   results_dir:="$RESULTS" \
   finish_mode:="$FINISH_MODE" \
+  use_perception:="$USE_PERCEPTION" \
   use_rviz:="$USE_RVIZ" \
   use_gz_gui:="$USE_GZ_GUI" \
   use_video:="$USE_VIDEO" \

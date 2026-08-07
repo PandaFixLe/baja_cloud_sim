@@ -818,9 +818,10 @@ class PathFollowerNode(Node):
         return command
 
     def _compute_longitudinal_target(self, command, braking_to_stop, track_err) -> float:
-        """Longitudinal target speed: speed-profile reference → finish cap →
-        flat_ground derate → PID → slope comp → idle floor → safety state
-        machine → accel/jerk limiter.  Returns the final target speed (m/s).
+        """Longitudinal target speed (实车开环): speed-profile reference → finish
+        cap → flat_ground derate → idle floor → safety state machine. 上游只发
+        期望速度设定值，由电机控制器自带速度闭环自行追随。Returns the final
+        target speed (m/s).
         """
         # ── Longitudinal control: cascaded PID tracking curvature profile ──
         # Replaces the old non-hysteretic e_y/yaw speed-cap (limit-cycle source).
@@ -854,25 +855,14 @@ class PathFollowerNode(Node):
             v_ground = self._ground_derate(self._current_speed)
             v_ref = min(v_ref, v_ground)
 
-        # Speed-loop PID → desired acceleration
-        e_v = v_ref - self._current_speed
-        self._lon_i = clamp(self._lon_i + e_v * self._dt,
-                            -self._lon_i_limit, self._lon_i_limit)
-        a_cmd = (self._lon_kp * e_v
-                 + self._lon_ki * self._lon_i
-                 + self._lon_kd * (e_v - self._lon_e_prev) / self._dt)
-        self._lon_e_prev = e_v
-
-        # Slope (gravity) compensation from reference centreline z-gradient
-        a_cmd += 9.81 * self._terrain_slope_at(self.position) * self._slope_comp_gain
-
-        # Integrate to a speed target, then idle/creep compensation
-        v_target = self._current_speed + a_cmd * self._dt
-        # While finishing, allow the speed to fall to 0 so the vehicle can
-        # actually stop. But keep the idle floor *until* we are genuinely
-        # braking to a stop (finish cap below idle_speed) — otherwise arming
-        # a finish mode at standstill (line / time) removes the creep that
-        # gets the vehicle moving in the first place and it never starts.
+        # ── 实车开环纵向控制 ──
+        # 电机控制器自带速度闭环：上游只发"期望速度"设定值，由下游闭环自行
+        # 计算所需加速度/扭矩去追随。因此这里不再做 PID 速度环、坡度前馈积分
+        # 与 rate limiter（那些是仿真弱执行器的兜底，实车上会与电机闭环重复
+        # 限制、使加减速变肉）。上游仅保留决策层(速度剖面/终点/障碍)与蠕行保底。
+        v_target = v_ref
+        # 怠速/蠕行保底：保证起步有动力、不趴窝。仅当已停稳或正在刹车进站时
+        # 允许降到 0(否则静止开 finish 模式会取消蠕行导致永远起不了步)。
         if self._finished:
             idle = 0.0
         elif self._finish_armed and self._finish_speed_cap() < self._idle_speed:
@@ -901,11 +891,10 @@ class PathFollowerNode(Node):
             if abs(track_err) > 0.5 and not self._finished:
                 v_target = max(v_target, 2.0)
 
-        # Acceleration / jerk rate limiter
-        delta_spd = v_target - self._prev_target_speed
-        clamped_spd = clamp(delta_spd, -self._lon_decel_step, self._lon_accel_step)
-        self._prev_target_speed += clamped_spd
-        return self._prev_target_speed
+        # 实车开环：不再做 accel/jerk rate limiter（由电机速度闭环负责追随斜率）。
+        # 直接以决策后的目标速度作为发给电机的设定值。
+        self._prev_target_speed = v_target
+        return v_target
 
     def _publish_actuation(self, command, target_speed) -> None:
         """Apply steering smoothing (low-pass + rate limit + spike guard),

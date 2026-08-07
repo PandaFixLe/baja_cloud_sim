@@ -176,7 +176,7 @@ def _extract_lane_boundaries(
         left_candidates.append([x_position, left_y])
         right_candidates.append([x_position, right_y])
 
-    if len(left_candidates) < 2:
+    if len(left_candidates) < 1:
         return _empty_points(), _empty_points()
 
     left = np.asarray(left_candidates)
@@ -461,7 +461,7 @@ class RoadAnalyzer(Node):
         left = _smooth_lane_track(left, win)
         right = _smooth_lane_track(right, win)
 
-        if len(left) < 3 or len(right) < 3:
+        if len(left) < 2 or len(right) < 2:
             if self._frame_count % log_int == 0:
                 self.get_logger().warn(
                     f'Frame {self._frame_count}: insufficient lane pairs '

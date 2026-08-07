@@ -3,8 +3,9 @@
 面向 **Ubuntu 22.04 + ROS 2 Humble + Gazebo Harmonic** 的自动驾驶赛车规划-控制闭环仿真工程。
 以 BAJA SAE 方程式越野车为对象，覆盖「场景生成 → 感知模拟 → Frenet 局部规划 → 横纵向控制 → 执行器 → 指标评价」全链路。
 
-当前分支 **`v2.3`**：横向为 Apollo 式 **LQR + 前馈**主控（含速度自适应反馈软化），
-纵向为**级联 PID**。在 294 m 闭环赛道上可稳定跑完整圈，平均中心线偏差 **0.08 m**，
+当前分支 **`v2.4`**：横向为 Apollo 式 **LQR + 前馈**主控（含速度自适应反馈软化），
+纵向为**实车开环**（仅发期望速度设定值，速度闭环交由电机控制器执行；仿真期保留
+idle 怠速保底）。在 294 m 闭环赛道上可稳定跑完整圈，平均中心线偏差 **0.08 m**，
 转向饱和率 **0%**，弯道无蛇形振荡、直道稳态高频抖动被有效抑制。
 
 > 本分支在 v2.2 实车对接准备的基础上，**新增 EPS（电动助力转向）执行器模型**以验证
@@ -114,9 +115,9 @@ RViz 中会以红色半透明 `LINE_STRIP` 显示终点线（`/finish_line_marke
 
 运行结束后自动调用 `tools/plot_tracking.py` 生成轨迹图。
 
-### 无障碍基准测试
+### 无障碍基准测试（默认关感知，专测规划控制）
 
-`run_test.sh` 是专用的空赛道脚本，用于测纯跟踪性能：
+`run_test.sh` 是专用的空赛道脚本，用于测纯跟踪/规划控制核心性能：
 
 ```bash
 ./run_test.sh --headless-gazebo --no-rviz
@@ -125,6 +126,21 @@ RViz 中会以红色半透明 `LINE_STRIP` 显示终点线（`/finish_line_marke
 与 `run.sh` 的区别：固定 `seed=0` / `obstacles=0`（无 `--obstacles` 参数）、
 使用独立的 `GZ_PARTITION`、结果写入 `results/flat_seed_0/`。
 因此**可与 `run.sh` 并发运行**而互不干扰。
+
+**默认 `use_perception=false`（关闭 LiDAR 感知链路）**：启动时不拉 `gz_pcl_bridge`
+与 `lidar_sim`，由 `truth_perception` 自动发**车道线真值**（`/road_boundary_markers`），
+让你只跑规划-控制核心验证算法。若需恢复完整感知，加 `--with-perception`。
+
+| 参数 | 说明 |
+|------|------|
+| `--with-perception` | 恢复完整 LiDAR 感知链路（默认关） |
+| `--seed` / `--finish-mode` / `--no-rviz` / `--headless-gazebo` / `--no-video` | 同 `run.sh` |
+
+> **也可对任意 launch 直接传参**关闭感知：
+> `ros2 launch baja_cloud_sim simulation.launch.py world_file:=... scenario_file:=... use_perception:=false`
+> launch 会在 `use_perception=false` 时自动把 `truth_perception.publish_ground_truth_boundary`
+> 设为 `true`（感知开启时自动为 `false`，避免与 `road_analyzer` 在 `/road_boundary_markers`
+> 上双发布冲突）。
 
 ---
 
@@ -203,7 +219,7 @@ path_follower (20 Hz, dt=0.05 s)
   ├─ 速度剖面   曲率上限 → 前向加速约束 → 后向减速约束
   │             → clearance/terrain 降速 → 后向可行性再传播
   ├─ 横向       LQR + 前馈（主）/ 纯追踪（fallback）
-  ├─ 纵向       级联 PID + 坡度补偿 + 速率限制
+  ├─ 纵向       实车开环：决策层(速度剖面/finish/障碍) + idle 保底 → 期望速度设定值
   ├─ 安全       3 级状态机 NORMAL / SLOWDOWN / EMERGENCY
   └─ /cmd_control (AckermannDriveStamped)
        │
@@ -284,22 +300,31 @@ x     = [∫e_y, e_y, ė_y, e_ψ, ė_ψ]        （5 状态增广 LQI）
   `cmd_steer_deadband_deg`（默认 1.5°）时强制归零；与 EPS 的 1° 死区 + 0.5° 输出死区
   共同构成约 3° 的小角度不响应区间，吃掉直道稳态残余抖动。弯道正常转角（≥2°）不受影响。
 
-### 纵向 — 级联 PID
+### 纵向 — 实车开环（期望速度设定值）
 
 ```
-v_ref  ← 曲率速度剖面
-e_v    = v_ref − v_actual
-a_cmd  = Kp·e_v + Ki·∫e_v + Kd·ė_v  +  9.81·sin(θ_road)·slope_comp_gain
-v_tgt  = v_actual + a_cmd·dt  →  加速度/jerk 速率限制  →  输出
+v_ref  ← 曲率速度剖面 → finish 限速 → 障碍/地形降速 → 安全状态机
+v_out  = max(v_ref, idle_speed)        # idle 怠速/蠕行保底
+        → 作为 /cmd_control.speed 发出（期望速度设定值）
 ```
 
-- 坡度补偿由参考中心线的 z 梯度前馈，抵消上下坡重力分量；
-- 保留 `idle_speed` 怠速下限，避免低速卡死；
-- 加减速率分别限制为 ≈4.0 / 5.0 m/s²。
+- **v2.4 起改为开环**：上游只发**期望速度设定值**，由电机控制器自带速度闭环自行
+  计算所需加速度/扭矩去追随。不再在 ROS 节点内做 PID 速度环、坡度前馈积分与
+  accel/jerk 速率限制——那些是仿真弱执行器（Gazebo `AckermannSteering` 直接积分
+  `cmd_vel`）的兜底；在带速度闭环的实车电机控制器上，两层限制会叠加使加减速变肉、
+  且增益互相"吃掉"。
+- 保留 `idle_speed` 怠速下限，避免起点无动力趴窝、或静止触发 finish 后被取消蠕行
+  导致永远起不了步（仅当 `_finished` 或 finish 刹车进站时才允许降到 0）。
+- `lon_kp/lon_ki/lon_kd/lon_i_limit/lon_accel_step/lon_decel_step/slope_comp_gain`
+  等 PID 参数在 `params.yaml` 中**保留未删**（避免破坏声明），但实车开环路径下不再参与
+  控制流；如需恢复仿真期 PID 跟随，可在 `path_follower_node._compute_longitudinal_target`
+  中还原。
+- 坡度补偿（上坡前馈）在实车上交由电机控制器处理。
 
-**这解决了直线速度振荡（P1）**：旧方案的速度上限直接由 `|cross_track|` 与 `|heading|`
-硬阈值触发且无迟滞，厘米级的横向误差就会激起「减速—回正—加速—超调」的极限环。
-现在横向误差不再直接进入速度环，仅通过状态机间接影响。
+**历史说明（仿真期级联 PID）**：v2.3 及以前纵向为
+`a_cmd = Kp·e_v + Ki·∫e_v + Kd·ė_v + 9.81·sin(θ_road)·slope_comp_gain`，
+积分得 `v_tgt` 再经 accel/jerk 速率限制。该方案解决了横向误差硬阈值引发的直线速度
+极限环（P1）；v2.4 为对接实车电机闭环改为开环发设定值。
 
 ### 安全 — 3 级状态机
 
@@ -877,6 +902,7 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 | **`v2.1`** | **v2.1** | **LQR + 前馈** | **新增终点减速停车逻辑 + 红色终点线 RViz Marker** |
 | **`v2.2`** | **v2.2** | **LQR + 前馈** | **实车对接准备：`mock_perception` 模拟感知 + 感知接口加固** |
 | **`v2.3`** | **v2.3** | **LQR + 前馈 + β(v)** | **EPS 执行器模型 + 速度自适应反馈软化 + 双向曲率前瞻 + 三档速度分级** |
+| **`v2.4`** | **v2.4** | **LQR + 前馈 + 开环纵向** | **纵向改为实车开环(发期望速度设定值, 速度闭环交电机) + 感知开关(`use_perception` / `run_test.sh` 默认关感知) + 车道线真值自动切换** |
 
 ### v2.1 相对 v2 的变更
 
@@ -1020,6 +1046,39 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 > （b）β(v) 高速弱化反馈；（c）双向曲率前瞻防过早出弯加速；（d）低通系数提至 0.5；
 > （e）K1（e_psi 移动平均）滤除参考点/DARE 跳变阶跃减突变频率 + K3（指令端绝对死区
 > + EPS 输出死区）吃掉直道残余抖动。最终实跑验证弯道无蛇形、直道修正有力、抖动频率收敛。
+
+### v2.4 相对 v2.3 的变更
+
+面向**实车（Orin）移植**的关键对接调整——电机控制器自带速度闭环，上游不再重复做：
+
+1. **纵向控制改为实车开环**——`path_follower_node._compute_longitudinal_target`
+   删除仿真期的 PID 速度环（`a_cmd` 比例/积分/微分 + 坡度前馈积分）与 accel/jerk
+   速率限制（`prev_target_speed` 每帧爬坡）。现逻辑为：
+   `v_out = max(v_ref, idle_speed)`，直接作为 `/cmd_control.speed` 发出的**期望速度
+   设定值**，由电机控制器自带速度闭环自行计算所需加速度/扭矩去追随。
+   - 保留 `idle_speed` 怠速/蠕行保底（仅 `_finished` 或 finish 刹车进站时允许降到 0）；
+   - 速度剖面、finish 限速、障碍/地形降速、安全状态机这些**决策层**全部保留（产出
+     `v_ref`）——它们决定"该跑多快"，不属于执行器闭环，应留在算法核心；
+   - `lon_kp/lon_ki/lon_kd/lon_i_limit/lon_accel_step/lon_decel_step/slope_comp_gain`
+     等 PID 参数在 `params.yaml` 中**保留未删**（仅声明、不参与控制流），便于回退或
+     仿真期需要 PID 跟随时还原。
+   - **设计依据**：电机控制器速度闭环与 ROS 节点 PID 是串级关系，上游再做一层速度环
+     会与底层叠加限幅，使加减速变肉、增益互相吸收；实车只需发设定值。
+2. **感知开关 `use_perception`**——`simulation.launch.py` 新增启动参数：
+   - `use_perception=true`（默认）：启动完整 LiDAR 感知组（`lidar_sim` + `gz_pcl_bridge`），
+     `truth_perception.publish_ground_truth_boundary` 自动 `false`（车道线由 `road_analyzer` 发布）；
+   - `use_perception=false`：不启动感知组，`truth_perception.publish_ground_truth_boundary`
+     自动 `true`，由 `truth_perception` 直接发**车道线真值**（`/road_boundary_markers`），
+     路径跟随规划-控制核心在无感知下也能跑（单独验证算法用）。
+   - 用 `PythonExpression` 在节点 `parameters` 内按 `use_perception` 求值该开关（执行阶段
+     才解析，规避 `SetLaunchConfiguration` 的时序/作用域坑）；`ros_gz_bridge` 始终保留
+     （它还桥定位 `odom` 等，规划控制需要）。
+3. **`run_test.sh` 默认关感知**——固定 `seed=0`/`obstacles=0` 的无障碍脚本现默认
+   `use_perception=false`（专测规划控制），新增 `--with-perception` 可恢复完整感知。
+   与 `run.sh` 并发互不干扰（独立 `GZ_PARTITION`）。
+4. **`params.yaml` 显式化车道线真值开关**——`truth_perception_node.publish_ground_truth_boundary`
+   显式写出（默认 `false`），实际由 launch 的 `use_perception` 动态覆盖。
+
 
 ### v2 相对 v1.5 的变更
 
