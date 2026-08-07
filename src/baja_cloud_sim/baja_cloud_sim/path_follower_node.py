@@ -100,16 +100,19 @@ class PathFollowerNode(Node):
         self._odom_velocity = (0.0, 0.0)  # (vx, vy) world-frame
         self._yaw_rate = 0.0
         # LQR params exposed to params.yaml (Phase: oscillation damping)
-        self.declare_parameter("lqr_R", 1.0)
-        self.declare_parameter("lqr_v_norm", 2.5)
-        self.declare_parameter("lqr_Q", [5.0, 2.0, 2.0, 1.0])
+        # 默认值与 config/params.yaml 对齐, 杜绝脱离 yaml 启动时用旧 4 状态增益.
+        self.declare_parameter("lqr_R", 3.0)
+        self.declare_parameter("lqr_v_norm", 1.5)
+        self.declare_parameter("lqr_Q", [0.05, 8.0, 2.0, 4.0, 0.5])
         self.declare_parameter("lqr_max_steering", 0.4538)
-        self.declare_parameter("lqr_velocity_recompute_threshold", 0.5)
+        self.declare_parameter("lqr_velocity_recompute_threshold", 1.0)
         self.declare_parameter("dare_solve_interval", 50)
-        # 方案 G: 反馈项速度自适应软化参数
-        self.declare_parameter("fb_speed_soften_alpha", 0.3)
+        # 方案 G + J1: 反馈项速度自适应软化参数
+        self.declare_parameter("fb_speed_soften_alpha", 0.6)
         self.declare_parameter("fb_speed_ref", 2.5)
-        self.declare_parameter("fb_speed_beta_min", 0.5)
+        self.declare_parameter("fb_speed_beta_min", 0.4)
+        # K1: e_psi 移动平均窗口(控制周期数, 0=关闭). 滤除参考点跳变引起的 e_psi 阶跃.
+        self.declare_parameter("e_psi_ma_window", 5)
         self._lqr = LQRController()
         self._lqr_cfg = LQRConfig(
             R=float(self.get_parameter("lqr_R").value),
@@ -124,17 +127,26 @@ class PathFollowerNode(Node):
                 self.get_parameter("fb_speed_soften_alpha").value),
             fb_speed_ref=float(self.get_parameter("fb_speed_ref").value),
             fb_speed_beta_min=float(self.get_parameter("fb_speed_beta_min").value),
+            e_psi_ma_window=int(self.get_parameter("e_psi_ma_window").value),
         )
         self._current_speed = 0.0
         self._prev_steering = 0.0  # low-pass filter state (Phase 3.2)
         self._prev_target_speed = 0.0  # speed rate-limiter state
         # 转向输出平滑参数 (实车轮胎友好)
-        self.declare_parameter("max_steer_rate", 0.25)
-        self.declare_parameter("steer_lowpass_alpha", 0.22)
-        self.declare_parameter("state_lowpass_alpha", 0.5)
+        # 默认值与 config/params.yaml 对齐; 即使不带参数文件单独启动也是稳定配置,
+        # 杜绝脱离 yaml 启动时回退到过紧的 max_steer_rate=0.25 与弱低通 0.22
+        # (双重收紧会废掉 LQR 修正能力, 导致蛇形 + 高频抖动).
+        self.declare_parameter("max_steer_rate", 1.2)
+        self.declare_parameter("steer_lowpass_alpha", 0.5)
+        self.declare_parameter("state_lowpass_alpha", 0.45)
+        # J3: 指令端绝对死区 — 平滑后最终转向指令绝对值小于此阈值时强制归零.
+        # 治理直道稳态高频抖动: LQR 在 0° 附近残差被反馈放大成小幅抖动, 经低通+速率
+        # 限幅后仍残留; 此死区让指令在小角度区间完全为零, 弯道(≥1°)正常突破.
+        self.declare_parameter("cmd_steer_deadband_deg", 1.5)
         self._max_steer_rate = float(self.get_parameter("max_steer_rate").value)
         self._steer_alpha = float(self.get_parameter("steer_lowpass_alpha").value)
         self._state_alpha = float(self.get_parameter("state_lowpass_alpha").value)
+        self._cmd_steer_deadband = math.radians(float(self.get_parameter("cmd_steer_deadband_deg").value))
         self.declare_parameter("enable_lqr", True)
         self._enable_lqr = bool(self.get_parameter("enable_lqr").value)
         self.planner_feasible = False
@@ -156,7 +168,7 @@ class PathFollowerNode(Node):
         self._use_speed_profile = bool(
             self.get_parameter("use_speed_profile").value
         )
-        self.declare_parameter("desired_clearance", 1.2)
+        self.declare_parameter("desired_clearance", 3.5)
         self._desired_clearance = float(self.get_parameter("desired_clearance").value)
         self.declare_parameter("min_speed_obstacle", 2.0)
         self._speed_cfg = SpeedProfileConfig(
@@ -195,10 +207,13 @@ class PathFollowerNode(Node):
 
         # LQI integral state (lateral-error accumulator)
         self._lqr_e_y_int: float = 0.0
+        # K1: e_psi 移动平均历史窗口(由 compute_lqr_steering 内部使用)
+        from collections import deque as _deque
+        self._e_psi_history: _deque = _deque(maxlen=int(getattr(self._lqr_cfg, "e_psi_ma_window", 5)) or 1)
         self._recovery_hold: int = 0  # countdown timer for RECOVERY exit delay
 
         # curvature-aware pre-deceleration
-        self.declare_parameter("max_lateral_accel", 1.8)
+        self.declare_parameter("max_lateral_accel", 1.2)
         self._speed_cfg.max_lateral_accel = float(
             self.get_parameter("max_lateral_accel").value)
         # 曲率前瞻距离: 出弯加速延后, 防止弯切直蛇形(0=关闭)
@@ -217,9 +232,9 @@ class PathFollowerNode(Node):
         self.declare_parameter("slope_comp_gain", 1.0)
         self.declare_parameter("speed_profile_max", 3.5)
         self.declare_parameter("speed_tier", "normal")
-        self.declare_parameter("tier_slow_speed", 2.8)
+        self.declare_parameter("tier_slow_speed", 2.5)
         self.declare_parameter("tier_normal_speed", 3.5)
-        self.declare_parameter("tier_fast_speed", 5.5)
+        self.declare_parameter("tier_fast_speed", 4.5)
         self.declare_parameter("lon_accel_step", 0.20)   # m/s per 50 ms ≈ 4.0 m/s²
         self.declare_parameter("lon_decel_step", 0.25)   # ≈ 5.0 m/s²
         self._lon_kp = float(self.get_parameter("lon_kp").value)
@@ -773,6 +788,7 @@ class PathFollowerNode(Node):
                 ref, self._current_speed,
                 self._lqr, self._lqr_cfg,
                 e_y_int=self._lqr_e_y_int,
+                e_psi_history=self._e_psi_history,
             )
             if lqr_out is not None:
                 command["steering"] = float(lqr_out["steering"])
@@ -918,7 +934,14 @@ class PathFollowerNode(Node):
             d = max(-tight_step, min(tight_step, d))
         d = max(-step, min(step, d))
         self._prev_steering += d
-        message.drive.steering_angle = float(self._prev_steering)
+        # 4) J3 指令端绝对死区: 平滑后最终转向角绝对值小于阈值时强制归零.
+        # 治理直道稳态高频抖动 — LQR 0° 附近残差经低通+速率限幅后仍残留小幅抖动,
+        # 此死区让指令在小角度区间完全为零, 弯道(≥1°)正常突破. 注意归零只作用于
+        # 发布值, self._prev_steering 保持平滑状态以避免死区进出造成阶跃.
+        final_steer = self._prev_steering
+        if abs(final_steer) < self._cmd_steer_deadband:
+            final_steer = 0.0
+        message.drive.steering_angle = float(final_steer)
         self.command_pub.publish(message)
 
         lookahead = PointStamped()

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections import deque
+from typing import Deque, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -263,6 +264,7 @@ def compute_lqr_steering(
     reference, actual_velocity,
     lqr_controller, lqr_cfg,
     e_y_int: float = 0.0,
+    e_psi_history: Optional[Deque[float]] = None,
 ) -> Optional[Dict[str, float]]:
     """Apollo-style *primary* lateral controller: ``δ = δ_ff + δ_fb``.
 
@@ -298,11 +300,23 @@ def compute_lqr_steering(
                                reference, e_y_int=e_y_int)
     if not use_int:
         state = state[1:]
+    # K1: e_psi 移动平均 — 滤除参考点索引跳变引起的 e_psi 离散阶跃.
+    # 参考点每 ~0.5m 跳一次采样索引, 弯道进入/退出段 reference["yaw"] 突变 → e_psi 阶跃
+    # → LQR 反馈激起高频转向抖动. 移动平均把窗口内 e_psi 平均, 阶跃被平滑成渐变.
+    ma_win = getattr(lqr_cfg, "e_psi_ma_window", 0)
+    if ma_win > 1 and e_psi_history is not None:
+        i_epsi = 3 if use_int else 2
+        e_psi_history.append(float(state[i_epsi]))
+        if len(e_psi_history) > ma_win:
+            e_psi_history.popleft()
+        # 窗口未满时仍用当前均值(样本少但有平滑效果)
+        state[i_epsi] = float(sum(e_psi_history) / len(e_psi_history))
     delta_ff = compute_feedforward(reference.get("kappa", 0.0), v_op, lqr_cfg)
     delta_fb = -float(K @ state)
-    # ── 方案 G: 反馈项速度自适应软化 ──
+    # ── 方案 G + J1: 反馈项速度自适应软化 ──
     # beta(v) = 1 / (1 + alpha * (v - v_ref)), 饱和到 [beta_min, 1.0]
     # 高速时 beta<1 → 反馈弱化, 小误差不再过激放大成蛇形;
+    # J1 削弱: alpha 0.3→0.6, beta_min 0.5→0.4, 直道反馈强度减半防残差累积爆发
     # 前馈 delta_ff 不变 → 弯道稳态跟随精度靠前馈保证.
     alpha = getattr(lqr_cfg, "fb_speed_soften_alpha", 0.0)
     v_ref = getattr(lqr_cfg, "fb_speed_ref", 2.5)

@@ -41,16 +41,21 @@ path_follower_node:
     lqr_Q: [0.05, 8.0, 2.0, 4.0, 0.5] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] (恢复基线: B加倍阻尼破坏直道, 回退)
     # 方案 G: 反馈项速度自适应软化. 高速时小误差不应激进修, 防止放大成蛇形.
     # beta(v) = 1/(1+alpha*(v-v_ref)), 饱和到 [beta_min, 1.0]. alpha=0 关闭.
-    fb_speed_soften_alpha: 0.3
+    fb_speed_soften_alpha: 0.6        # J1: 削弱 0.3→0.6, 高速直道反馈强度减半防残差累积爆发
     fb_speed_ref: 2.5                  # 低于此速度 beta=1.0(不软化)
-    fb_speed_beta_min: 0.5             # beta 下限, 防止极端高速反馈完全失效
+    fb_speed_beta_min: 0.4             # J1: beta 下限 0.5→0.4, 高速反馈弱化至 40%
+    e_psi_ma_window: 5               # K1: e_psi 移动平均窗口(控制周期数, 5≈0.25s), 滤除参考点跳变引起的 e_psi 阶跃
     # ── 转向输出平滑 (实车轮胎友好，避免高频极端反向) ──
     lqr_max_steering: 0.4538         # LQR 输出幅值上限 (rad)，对齐 max_steering_angle=26°
     lqr_velocity_recompute_threshold: 1.0  # DARE 重解阈值 (放宽，减少速度波动触发重解)
     dare_solve_interval: 50              # DARE 强制重解步数间隔 (50×0.05s=2.5s，减少 K 跳变频率)
     max_steer_rate: 1.2              # 控制器侧转向速率上限(rad/s≈68°/s) — 宽松, 让 LQR 修正指令完整到达 EPS; 真实齿条 15°/s 约束由 EPS(actuator_adapter)施加, 此处不重复限速(重复限速会废掉修正能力)
     steer_lowpass_alpha: 0.5         # 输出一阶低通系数, 0.5 较 0.22 大幅减重相位滞后, 避免平滑吃掉纠偏高频分量导致蛇形
-    state_lowpass_alpha: 0.45        # 反馈状态(yaw_rate/vel)低通系数 (越小越平滑)
+    state_lowpass_alpha: 0.45        # 反馈状态(yaw_rate/vel)低通系数 — 0.25 会过度滞后破坏弯道
+                                      # 响应(0.2s 滞后吃掉 LQR 相位裕度导致弯道饱和), 回退至 0.45;
+                                      # 直道稳态抖动改由 EPS 输出端绝对死区(eps_output_deadband_deg)治理
+    cmd_steer_deadband_deg: 1.5      # J3+K3: 指令端绝对死区(deg) — 平滑后转向指令<1.5°强制归零,
+                                      # 配合 EPS 死区1°+输出死区0.5° 共3°小角度不响应区间, 吃掉中等抖动
     s_proj_lookahead: 0.8
     max_lateral_accel: 1.2                # 弯道侧向加速度上限(m/s²) — 你实跑验证过能过弯的值, 回退自1.6(1.6自跑反而出界更重)
     curvature_lookahead_m: 3.0            # 曲率前瞻距离(m): 出弯加速延后防弯切直蛇形, 0=关闭(用当前点曲率)
@@ -113,6 +118,8 @@ actuator_adapter_node:
     eps_tau: 0.0                 # 一阶滞后时间常数 (s) → 0: 依赖 Gazebo 物理响应
     eps_max_rate_deg: 15.0       # 齿条最大转速 (deg/s) → 满打 26° 约 1.7 s (真实约束, 15 为拟合值)
     eps_deadband_deg: 1.0        # 死区 (deg)，消除小幅抖动/传感器噪声
+    eps_output_deadband_deg: 0.5 # 输出端绝对死区 (deg): 最终齿条角绝对值<0.5° 强制归零,
+                                  # 治理直道稳态高频抖动(LQR 0° 附近残差放大), 弯道≥2°正常突破
     # Phase-0 platform remaps (real-car port):
     # simulation → Gazebo vehicle; real car → chassis driver topic.
     cmd_vel_topic: "/model/baja_vehicle/cmd_vel"

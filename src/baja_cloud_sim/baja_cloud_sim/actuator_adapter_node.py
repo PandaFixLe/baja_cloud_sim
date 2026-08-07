@@ -38,11 +38,17 @@ class ActuatorAdapterNode(Node):
         self.declare_parameter("eps_tau", 0.0)
         self.declare_parameter("eps_max_rate_deg", 15.0)
         self.declare_parameter("eps_deadband_deg", 1.0)
+        # 输出端绝对死区: 最终齿条角绝对值小于此阈值时强制归零.
+        # 治理直道稳态高频抖动 — LQR 在 0° 附近残差被反馈放大成 ±2° 抖动指令,
+        # 现有 eps_deadband 是"增量死区"(基于 |target-current|), 抖动时每次增量都>1°
+        # 故不触发; 此处加"绝对死区"让齿条在小角度区间完全不动, 弯道(≥2°)正常突破.
+        self.declare_parameter("eps_output_deadband_deg", 0.5)
         self.wheelbase = float(self.get_parameter("wheelbase").value)
         self.timeout = float(self.get_parameter("command_timeout").value)
         self.eps_tau = float(self.get_parameter("eps_tau").value)
         self.eps_max_rate = math.radians(float(self.get_parameter("eps_max_rate_deg").value))
         self.eps_deadband = math.radians(float(self.get_parameter("eps_deadband_deg").value))
+        self.eps_output_deadband = math.radians(float(self.get_parameter("eps_output_deadband_deg").value))
         self.last_command = None
         self.last_stamp = None
         self._current_speed = 0.0
@@ -72,17 +78,28 @@ class ActuatorAdapterNode(Node):
         self.status_pub.publish(status)
 
     def _apply_eps(self, target_steering: float, dt: float) -> float:
-        """First-order lag + rate limit + deadband, emulating the EPS rack."""
-        # Deadband: ignore tiny command moves (rack freeplay / sensor noise).
+        """First-order lag + rate limit + deadband, emulating the EPS rack.
+
+        Returns the **effective** rack angle after the output absolute deadband
+        (internal ``self._eps_angle`` keeps the true rack state so incremental
+        deadband logic stays consistent). Callers should use the return value.
+        """
+        # Incremental deadband: ignore tiny command moves (rack freeplay / sensor noise).
         if abs(target_steering - self._eps_angle) < self.eps_deadband:
-            return self._eps_angle
-        # First-order lag toward the commanded angle.
-        alpha = 1.0 - math.exp(-dt / max(self.eps_tau, 1e-4))
-        lagged = self._eps_angle + (target_steering - self._eps_angle) * alpha
-        # Slew-rate limit (deg/s -> rad over dt).
-        max_step = self.eps_max_rate * dt
-        delta = max(-max_step, min(max_step, lagged - self._eps_angle))
-        self._eps_angle += delta
+            pass  # keep self._eps_angle unchanged, still apply output deadband below
+        else:
+            # First-order lag toward the commanded angle.
+            alpha = 1.0 - math.exp(-dt / max(self.eps_tau, 1e-4))
+            lagged = self._eps_angle + (target_steering - self._eps_angle) * alpha
+            # Slew-rate limit (deg/s -> rad over dt).
+            max_step = self.eps_max_rate * dt
+            delta = max(-max_step, min(max_step, lagged - self._eps_angle))
+            self._eps_angle += delta
+        # Output absolute deadband: small rack angles forced to zero.
+        # Suppresses steady-state high-frequency jitter around 0° (LQR residual
+        # amplification) without affecting curve commands (>=2°).
+        if abs(self._eps_angle) < self.eps_output_deadband:
+            return 0.0
         return self._eps_angle
 
     def _publish(self) -> None:
@@ -105,9 +122,9 @@ class ActuatorAdapterNode(Node):
                 )
                 self._current_speed = smoothed
                 # EPS actuator model: realistic steering rack dynamics.
-                self._apply_eps(steering, dt)
+                eps_out = self._apply_eps(steering, dt)
                 output.linear.x = smoothed
-                output.angular.z = smoothed * math.tan(self._eps_angle) / self.wheelbase if abs(smoothed) > 0.01 else 0.0
+                output.angular.z = smoothed * math.tan(eps_out) / self.wheelbase if abs(smoothed) > 0.01 else 0.0
         else:
             self._current_speed = 0.0
             self._prev_accel = 0.0

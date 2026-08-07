@@ -73,9 +73,12 @@ class LQRConfig:
     velocity_recompute_threshold: float = 0.5
     # 方案 G: 反馈项速度自适应软化. 高速时小误差不应激进修, 防止放大成蛇形.
     # beta(v) = 1/(1+alpha*(v-v_ref)), 饱和到 [beta_min, 1.0]. alpha=0 关闭.
-    fb_speed_soften_alpha: float = 0.3
+    fb_speed_soften_alpha: float = 0.6
     fb_speed_ref: float = 2.5           # 低于此速度 beta=1.0(不软化)
-    fb_speed_beta_min: float = 0.5      # beta 下限, 防止极端高速反馈完全失效
+    fb_speed_beta_min: float = 0.4      # beta 下限, 高速反馈弱化至 40% 防残差累积爆发
+    # K1: e_psi 移动平均窗口大小(控制周期数). 滤除参考点索引跳变引起的 e_psi 离散阶跃,
+    # 这是直道/缓弯指令高频抖动的主要来源. 0=关闭(用原始 e_psi). 窗口 5 ≈ 0.25s 滞后.
+    e_psi_ma_window: int = 5
 
 
 @dataclass
