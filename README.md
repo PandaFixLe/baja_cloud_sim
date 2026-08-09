@@ -445,14 +445,18 @@ path_follower_node:
 ```yaml
     use_speed_profile: true
     speed_profile_max: 3.5        # fallback/历史兼容: tier 非法时退回此值
-    max_lateral_accel: 1.2        # 弯道侧向加速度上限 (m/s²)
+    max_lateral_accel: 0.8        # 弯道侧向加速度上限 (m/s²) — 实跑验证过能过弯的值
+                                #   (回退自 1.6, 1.6 自跑反而出界更重; 真车建议再降到 0.5~0.6)
     curvature_lookahead_m: 3.0    # 曲率前瞻+后视距离 (m): 双向约束, 出弯加速延后防弯切直蛇形
+    pre_decel_lookahead_m: 8.0    # 前向预减速前瞻 (m): 进弯前 8 m 起平滑降速, 避免仅弯前 3 m 急刹导致转向饱和
+    pre_decel_max: 1.5            # 预减速段最大减速度 (m/s²): ≤max_decel, 越温和过渡带越长
+    v_ref_lowpass_alpha: 0.75     # v_ref 帧间低通系数: 抹平 10Hz 路径刷新导致的 v_ref 锯齿多峰, 0.75 让弯道减速及时生效
     desired_clearance: 3.5        # 障碍降速起始距离
     min_speed_obstacle: 2.0
     terrain_slope_threshold: 0.06
     terrain_min_speed: 1.0
     tier_slow_speed: 2.5          # slow 档: 直线段最大速度
-    tier_normal_speed: 3.5        # normal 档: 直线段最大速度
+    tier_normal_speed: 4.0        # normal 档: 直线段最大速度
     tier_fast_speed: 4.5          # fast 档: 直线段最大速度
 ```
 
@@ -1098,7 +1102,31 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 4. **工具链同步**——`tools/plot_tracking.py`、`tools/offline_closed_loop.py`、
    `tools/steering_probe.py`、`tools/verify_eps.py` 等随核心参数/接口变更同步更新。
 
-> 本分支未改动控制算法行为；规划-控制核心、EPS 模型、感知开关逻辑均与 v2.4 一致。
+5. **感知开关**——`simulation.launch.py` 提供 `use_perception` 启动参数（源码默认 `true`：
+   跑完整 LiDAR 感知链路；置 `false` 时自动将 `publish_ground_truth_boundary` 覆盖为 `true`
+   发车道线真值，便于单独验证规划-控制核心）。本地可直接把该 `DeclareLaunchArgument` 的
+   `default_value` 改为 `false`，让所有仿真默认关闭感知。
+
+6. **弯道稳定性改进（VM→物理机退化的根因修复）**——物理机 DDS 调度抖动放大，原 4 m/s 进弯 +
+   弯道半径 10 m 致 `a_lat≈1.6` 接近极限 → 转向饱和 ±26° 且 EPS 15°/s 跟不上 → 第三弯脱轨。
+   在保持横向 LQR / 纵向开环 / EPS 模型结构不变的前提下，新增/调整以下增量：
+   - **前向预减速** `pre_decel_lookahead_m=8.0` + `pre_decel_max=1.5`
+     （`speed_profile.py`）：在 `plan_speed_profile` 的 backward pass 之后新增前向 pass，
+     进弯前 8 m 起平滑降速，避免仅在弯前 3 m 急刹触发转向饱和。
+   - **v_ref 稳定** `v_ref_lowpass_alpha=0.75`（`path_follower_node.py`）：用 s-弧长投影
+     `_projected_index`（带 lookahead）替代全局欧氏 `_closest_index` 取参考速度，并对 `v_ref`
+     做一阶低通，抹平 `planned_path` 10 Hz 刷新导致的 `v_ref` 锯齿/多峰。
+   - **饱和降速（P1）**：转向指令达 `max_steering*0.95` 即标记 `saturated`，纵向目标 ×0.6，
+     主动降低过弯速度需求。
+   - **走廊自适应扩张（P2）**（`frenet_planner_node.py`）：车辆横向偏移 `>0.5 m` 时在窗口内对
+     `left/right_limits` 扩张 0.5 m，提升扰动后恢复能力。
+   - **参数联动**：`max_lateral_accel` 实际调为 `0.8`（回退自 1.6，1.6 自跑出界更重）；
+     `curvature_lookahead_m=3.0`。**注意**：EPS 参数（`eps_max_rate_deg=15°/s` 等）为真实车
+     硬件约束，**不在仿真调参范围内**。真车上车建议把 `max_lateral_accel` 进一步降到 0.5~0.6，
+     或 `tier_normal_speed` 降到 2.5~3.0 以留安全裕度。
+
+> 说明：v2.5 相对 v2.4 **改动了一部分控制/规划行为**（上述第 6 条的弯道稳定性增量），
+> 但**未改动**算法核心结构（横向 LQR + 前馈、纵向实车开环、EPS 仿真层模型）与感知开关逻辑本身。
 
 ### v2 相对 v1.5 的变更
 
