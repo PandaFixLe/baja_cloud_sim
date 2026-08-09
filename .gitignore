@@ -9,3 +9,7 @@ log/
 # Runtime-generated outputs
 results/
 runtime/
+
+# Test / tooling caches
+.pytest_cache/
+.claude/

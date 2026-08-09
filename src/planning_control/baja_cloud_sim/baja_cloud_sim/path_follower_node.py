@@ -220,8 +220,24 @@ class PathFollowerNode(Node):
         self.declare_parameter("curvature_lookahead_m", 3.0)
         self._speed_cfg.curvature_lookahead_m = float(
             self.get_parameter("curvature_lookahead_m").value)
+        # 前向预减速: 进弯前 pre_decel_lookahead_m 米开始平滑降速, 避免 backward pass 仅弯前急刹
+        self.declare_parameter("pre_decel_lookahead_m", 8.0)
+        self._speed_cfg.pre_decel_lookahead_m = float(
+            self.get_parameter("pre_decel_lookahead_m").value)
+        self.declare_parameter("pre_decel_max", 1.5)
+        self._speed_cfg.pre_decel_max = float(
+            self.get_parameter("pre_decel_max").value)
 
         self._diag_tick = 0  # speed-profile diagnostic counter
+        # v_ref 帧间低通: planned_path 10Hz 刷新, _speed_profile 整体重算,
+        # 若用全局最近点取 v_ref 会在弯道因路径起点跳动而取到不同位置的值→v_ref 锯齿.
+        # 低通平滑 v_ref 的帧间跳变, 让弯道速度呈"减速-保持-加速"单峰而非多峰.
+        self.declare_parameter("v_ref_lowpass_alpha", 0.4)
+        self._v_ref_alpha = float(self.get_parameter("v_ref_lowpass_alpha").value)
+        self._v_ref_smoothed = 0.0  # 低通状态
+        # speed profile 取值点: 用 s-projection(有 last_idx 锚定) 替代全局欧氏最近点,
+        # 避免 10Hz 路径刷新时取值索引在弯道跳动.
+        self._vref_proj_last_idx: int = 0
 
         # ── Longitudinal cascaded-PID params (Apollo-style) ──
         self.declare_parameter("lon_kp", 2.0)
@@ -759,6 +775,7 @@ class PathFollowerNode(Node):
             "speed": float(self.config.target_speed),
             "target_x": self.position[0], "target_y": self.position[1],
             "e_y": 0.0, "heading_error": 0.0, "steering": 0.0,
+            "saturated": False,
         }
         lqr_primary = (
             self._enable_lqr
@@ -815,6 +832,9 @@ class PathFollowerNode(Node):
             float(command["steering"]),
             -self._lqr_cfg.max_steering, self._lqr_cfg.max_steering,
         )
+        # P1: 反馈饱和检测 — 转向角贴近物理极限(≥95%)时标记饱和,
+        # 让纵向降速给反馈项和 EPS 追赶余量, 避免累积脱轨(第三个弯道根因).
+        command["saturated"] = abs(command["steering"]) >= self._lqr_cfg.max_steering * 0.95
         return command
 
     def _compute_longitudinal_target(self, command, braking_to_stop, track_err) -> float:
@@ -826,15 +846,39 @@ class PathFollowerNode(Node):
         # ── Longitudinal control: cascaded PID tracking curvature profile ──
         # Replaces the old non-hysteretic e_y/yaw speed-cap (limit-cycle source).
         v_ref = float(command["speed"])
-        if self._use_speed_profile and len(self._speed_profile) > 0:
-            nearest = _closest_index(self.path, self.position)
+        if self._use_speed_profile and len(self._speed_profile) > 0 and len(self._path_arc_lengths) > 0:
+            # 用 s-projection(有 last_idx 锚定) 替代全局欧氏最近点.
+            # planned_path 10Hz 整体重算, 全局最近点在弯道会因路径起点跳动而取到不同
+            # 位置的 speed_profile 值→v_ref 锯齿多峰. s-projection 沿弧长投影+前看,
+            # 索引连续单调, 取值点不会帧间瞬移.
+            nearest = _projected_index(
+                self.path, self._path_arc_lengths,
+                self.position, self._vref_proj_last_idx,
+                self._s_proj_lookahead,
+            ) if len(self.path) >= 2 else 0
+            self._vref_proj_last_idx = max(0, nearest)
             if nearest < len(self._speed_profile):
-                v_ref = self._speed_profile[nearest]
+                v_ref_raw = self._speed_profile[nearest]
+                # 一阶低通: 平滑 10Hz 路径刷新导致的 v_ref 帧间跳变
+                if self._v_ref_smoothed <= 0.0:
+                    self._v_ref_smoothed = v_ref_raw  # 首帧直通
+                else:
+                    self._v_ref_smoothed = (
+                        self._v_ref_alpha * v_ref_raw
+                        + (1.0 - self._v_ref_alpha) * self._v_ref_smoothed
+                    )
+                v_ref = self._v_ref_smoothed
                 if self._diag_tick < 20:
                     self._diag_tick += 1
                     self.get_logger().info(
                         f'[SPEED-DIAG #{self._diag_tick}] v_ref={v_ref:.1f} '
-                        f'actual={self._current_speed:.1f}')
+                        f'raw={v_ref_raw:.1f} actual={self._current_speed:.1f}')
+
+        # P1: 反馈饱和时主动降速 — 转向已贴物理极限, 继续高速只会累积偏差脱轨.
+        # 降速到 0.6 倍给 LQR 反馈项和 EPS 追赶余量, 车速降后所需转向角自然下降,
+        # 反馈脱离饱和后速度恢复. 这不是 EMERGENCY(那是 v=0), 而是"温和减速等反馈追上".
+        if command.get("saturated", False) and not braking_to_stop:
+            v_ref *= 0.6
 
         # ── Finish / 终点逻辑：锚定停车目标，平滑减速至停止 ──
         # NOTE: _update_progress / _update_finish_arm already ran early in

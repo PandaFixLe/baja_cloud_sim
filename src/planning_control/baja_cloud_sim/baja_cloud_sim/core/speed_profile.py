@@ -77,4 +77,26 @@ def plan_speed_profile(
             continue
         v_limit = math.sqrt(max(0.0, v[i+1]**2 + 2.0 * (-cfg.max_decel) * ds))
         v[i] = min(v[i], v_limit)
+    # 前向预减速 pass: 将"前方弯道处的低速"提前 pre_decel_lookahead_m 米开始平滑拉低,
+    # 避免 backward pass 只在弯前约3m内急刹→进弯速度未降到位→转向饱和.
+    # 机理: 从前往后扫, 对任意点 i, 若前方 lookahead 窗口内有更低的 v[j],
+    # 则要求 v[i] 满足 v[i]² ≥ v[j]² + 2·pre_decel_max·(s[j]-s[i]),
+    # 即"从 i 到 j 这段距离内, 以不超过 pre_decel_max 的减速度平滑降下来".
+    # pre_decel_max ≤ max_decel 保证这只是 backward pass 结果的"更平滑前移", 不会放松任何约束.
+    pre_look = max(0.0, getattr(cfg, "pre_decel_lookahead_m", 0.0))
+    pre_a = getattr(cfg, "pre_decel_max", cfg.max_decel)
+    if pre_look > 0.0 and pre_a > 0.0:
+        j_hi = 0
+        for i in range(N):
+            target = arc_lengths[i] + pre_look
+            while j_hi < N - 1 and arc_lengths[j_hi] < target:
+                j_hi += 1
+            for jj in range(i + 1, j_hi + 1):
+                ds = arc_lengths[jj] - arc_lengths[i]
+                if ds <= 0.0:
+                    continue
+                # 从 i 到 jj 允许以 pre_a 减速到达 v[jj]: v[i] ≥ sqrt(v[jj]² + 2·pre_a·ds)
+                v_limit = math.sqrt(max(0.0, v[jj]**2 + 2.0 * pre_a * ds))
+                if v_limit < v[i]:
+                    v[i] = v_limit
     return [float(clamp(vi, cfg.min_speed, cfg.max_speed)) for vi in v]

@@ -183,6 +183,21 @@ class FrenetPlannerNode(Node):
             idx_window = [(self.last_nearest + k) % n for k in range(horizon_samples)]
         else:
             idx_window = list(range(self.last_nearest, min(n, self.last_nearest + horizon_samples)))
+        # P2: 走廊按车位置自适应扩张 — 车已偏离中心线时, 几何中心走廊会逼车"急切回中",
+        # 但反馈已饱和+EPS跟不上时根本切不回, 反而因走廊窄报 infeasible 或贴边触发
+        # EMERGENCY. 这里把车所在侧的走廊往外扩 offset_margin, 给车"就地缓缓回正"空间.
+        vehicle_lateral = signed_lateral(self.position, self.centerline[self.last_nearest])
+        offset_margin = 0.5  # m, 车偏离>阈值时单侧扩宽
+        offset_threshold = 0.5  # m, 触发阈值
+        if abs(vehicle_lateral) > offset_threshold:
+            if vehicle_lateral > 0:
+                # 车在中心线左侧 → 左走廊往外扩
+                for index in idx_window:
+                    left_limits[index] += offset_margin
+            else:
+                # 车在中心线右侧 → 右走廊往外扩(更负)
+                for index in idx_window:
+                    right_limits[index] -= offset_margin
         for index in idx_window:
             # Compute left/right limits independently — ns labels guarantee
             # which boundary is which, no max/min cross-mixing needed.

@@ -48,6 +48,11 @@ class SpeedProfileConfig:
     # 避免车还在弯里就因前方直道κ=0而提前加速(导致弯切直蛇形震荡).
     # 0 = 关闭前瞻(用当前点曲率, 原行为).
     curvature_lookahead_m: float = 3.0
+    # 前向预减速: 进弯前 pre_decel_lookahead_m 米开始平滑降速, 而非仅靠 backward
+    # pass 在弯前 3m 内急刹. 预减速段最大减速度受 pre_decel_max 约束(应 ≤ max_decel,
+    # 越温和过渡带越长, 转向角需求越不突兀). 0 = 关闭(仅用原有 forward/backward pass).
+    pre_decel_lookahead_m: float = 0.0
+    pre_decel_max: float = 1.5
 
 
 @dataclass

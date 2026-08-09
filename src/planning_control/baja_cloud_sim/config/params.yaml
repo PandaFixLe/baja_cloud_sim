@@ -60,8 +60,11 @@ path_follower_node:
     cmd_steer_deadband_deg: 1.5      # J3+K3: 指令端绝对死区(deg) — 平滑后转向指令<1.5°强制归零,
                                       # 配合 EPS 死区1°+输出死区0.5° 共3°小角度不响应区间, 吃掉中等抖动
     s_proj_lookahead: 0.8
-    max_lateral_accel: 1.2                # 弯道侧向加速度上限(m/s²) — 你实跑验证过能过弯的值, 回退自1.6(1.6自跑反而出界更重)
+    max_lateral_accel: 0.8               # 弯道侧向加速度上限(m/s²) — 你实跑验证过能过弯的值, 回退自1.6(1.6自跑反而出界更重)
     curvature_lookahead_m: 3.0            # 曲率前瞻距离(m): 出弯加速延后防弯切直蛇形, 0=关闭(用当前点曲率)
+    pre_decel_lookahead_m: 8.0            # 前向预减速前瞻(m): 进弯前8m开始平滑降速, 避免 backward pass 仅弯前3m急刹导致转向饱和. 0=关闭
+    pre_decel_max: 1.5                    # 预减速段最大减速度(m/s²): ≤max_decel(2.5), 越温和过渡带越长, 转向角需求越平顺
+    v_ref_lowpass_alpha: 0.75             # v_ref 帧间低通系数: planned_path 10Hz刷新致 _speed_profile 整体重算, 全局最近点取值在弯道会跳→v_ref锯齿多峰. 低通平滑为单峰. 0=纯历史(不更新), 1=无低通. 0.4→0.75: 让弯道减速更快生效, 不被低通拖平
     terrain_slope_threshold: 0.06
     terrain_min_speed: 1.0
     use_terrain_profile: false       # 实车对接感知后统一由 flat_ground 障碍物处理地形降速
@@ -78,7 +81,7 @@ path_follower_node:
         lateral_avoid: false
         approach_distance: 5.0      # 提前/过后对称平滑过渡距离 (m)
         slow_speed: 2.0             # 通过特殊地面时的目标速度 (m/s)
-        default_half_width: 0.9     # tall 默认包围盒半宽兜底 (车宽1.5*0.6)
+        default_half_width: 0.9     
     # 忽略传感器原点附近(车体自身/地面杂波)的虚假障碍检测，避免起点附近幽灵膨胀框
     min_obstacle_range: 0.5
 
@@ -91,12 +94,12 @@ path_follower_node:
     slope_comp_gain: 1.0
     # ── 速度档位 (speed tier) ──
     # 仅调直线段最大速度，弯道/避障/地形降速逻辑不动。
-    # slow≈均速2.5 / normal≈均速3.5 / fast≈均速4.5
+    # slow≈均速2.5 / normal≈均速4.0 / fast≈均速4.5
     speed_tier: "normal"          # slow | normal | fast
     tier_slow_speed: 2.5          # slow 档：直线段最大速度
-    tier_normal_speed: 3.5        # normal 档：直线段最大速度
+    tier_normal_speed: 4.0       # normal 档：直线段最大速度
     tier_fast_speed: 4.5          # fast 档：直线段最大速度
-    speed_profile_max: 3.5        # fallback/历史兼容：tier 非法时退回此值
+    speed_profile_max: 4.0       # fallback/历史兼容：tier 非法时退回此值
     lon_accel_step: 0.20   # m/s per 50 ms ≈ 4.0 m/s²
     lon_decel_step: 0.25   # ≈ 5.0 m/s²
     # ── Finish / 终点逻辑（line | circle | time | none） ──

@@ -903,6 +903,7 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 | **`v2.2`** | **v2.2** | **LQR + 前馈** | **实车对接准备：`mock_perception` 模拟感知 + 感知接口加固** |
 | **`v2.3`** | **v2.3** | **LQR + 前馈 + β(v)** | **EPS 执行器模型 + 速度自适应反馈软化 + 双向曲率前瞻 + 三档速度分级** |
 | **`v2.4`** | **v2.4** | **LQR + 前馈 + 开环纵向** | **纵向改为实车开环(发期望速度设定值, 速度闭环交电机) + 感知开关(`use_perception` / `run_test.sh` 默认关感知) + 车道线真值自动切换** |
+| **`v2.5`** | **v2.5** | **LQR + 前馈 + 开环纵向** | **环境快照/恢复脚本 + 测试缓存清理(`.pytest_cache`/`.claude` 入 ignore) + 安装/运行脚本与文档同步** |
 
 ### v2.1 相对 v2 的变更
 
@@ -1079,6 +1080,25 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 4. **`params.yaml` 显式化车道线真值开关**——`truth_perception_node.publish_ground_truth_boundary`
    显式写出（默认 `false`），实际由 launch 的 `use_perception` 动态覆盖。
 
+
+### v2.5 相对 v2.4 的变更
+
+在保持算法核心（横向 LQR + 前馈、纵向实车开环、EPS 仿真层模型）不变的前提下，
+聚焦**工程化与可复现性**的增量改进：
+
+1. **环境快照与恢复脚本**——新增 `env_snapshot.md`（当前系统依赖/环境快照记录）
+   与 `env_restore.sh`（按快照一键恢复依赖环境），换系统/重装后无需从零排查依赖。
+   配合 `install_ubuntu2204.sh` 使用，可在干净 Ubuntu 22.04 上快速重建开发环境。
+2. **测试缓存清理**——`.gitignore` 增补 `.pytest_cache/` 与 `.claude/`，避免 pytest
+   缓存与编辑器/agent 配置混入版本库；已跟踪的 `.pytest_cache` 目录已从索引中移除
+   （本地文件保留）。
+3. **安装/运行脚本与文档同步**——`install.sh` / `install_ubuntu2204.sh` /
+   `start_remote_rviz.sh` 等与 `docs/`、`README.md` 的改动保持对齐，修正文档中
+   过时的路径与说明（如测试章节的工作目录）。
+4. **工具链同步**——`tools/plot_tracking.py`、`tools/offline_closed_loop.py`、
+   `tools/steering_probe.py`、`tools/verify_eps.py` 等随核心参数/接口变更同步更新。
+
+> 本分支未改动控制算法行为；规划-控制核心、EPS 模型、感知开关逻辑均与 v2.4 一致。
 
 ### v2 相对 v1.5 的变更
 

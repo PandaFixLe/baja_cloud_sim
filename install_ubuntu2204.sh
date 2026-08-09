@@ -25,18 +25,19 @@ fi
 
 if ! grep -Rqs --include='*.list' --include='*.sources' \
   'packages\.osrfoundation\.org/gazebo/ubuntu-stable' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
-  # Prefer the Tsinghua mirror for both the key and the apt source (the upstream
-  # OSRF host is often unreachable on networks in China). Fall back to upstream.
-  if sudo curl -sSL --max-time 30 https://mirrors.tuna.tsinghua.edu.cn/osrf/ubuntu-stable \
-       -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg 2>/dev/null \
-     && [ -s /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg ]; then
-    GAZEBO_DEB="https://mirrors.tuna.tsinghua.edu.cn/osrf/ubuntu-stable"
-    echo "Using Tsinghua OSRF mirror for Gazebo."
-  else
-    sudo curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
-      -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
-    GAZEBO_DEB="https://packages.osrfoundation.org/gazebo/ubuntu-stable"
-  fi
+  # NOTE: The Tsinghua (TUNA) OSRF mirror path
+  # (https://mirrors.tuna.tsinghua.edu.cn/osrf/...) has been removed and now
+  # returns 404, so we use the upstream OSRF source and its official GPG key
+  # directly. The old script also mistakenly downloaded the repo *directory*
+  # as the keyring, which produced an invalid key and broke `apt update`.
+  # The upstream key is served as an ASCII-armored file (.key). `apt` requires
+  # the file referenced by `signed-by=` to be a *dearmored* binary keyring, so
+  # pipe it through `gpg --dearmor`. Storing the raw armored text as a `.gpg`
+  # file makes apt fail with NO_PUBKEY even though the key is present.
+  sudo curl -sSL https://packages.osrfoundation.org/gazebo.key \
+    | sudo gpg --dearmor -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+  GAZEBO_DEB="https://packages.osrfoundation.org/gazebo/ubuntu-stable"
+  echo "Using upstream OSRF source for Gazebo."
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] ${GAZEBO_DEB} $(. /etc/os-release && echo "$UBUNTU_CODENAME") main" \
     | sudo tee /etc/apt/sources.list.d/gazebo-stable.list >/dev/null
 else
