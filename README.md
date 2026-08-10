@@ -3,10 +3,25 @@
 面向 **Ubuntu 22.04 + ROS 2 Humble + Gazebo Harmonic** 的自动驾驶赛车规划-控制闭环仿真工程。
 以 BAJA SAE 方程式越野车为对象，覆盖「场景生成 → 感知模拟 → Frenet 局部规划 → 横纵向控制 → 执行器 → 指标评价」全链路。
 
-当前分支 **`v2.6`**：横向为 Apollo 式 **LQR + 前馈**主控（含速度自适应反馈软化），
+当前分支 **`v2.7`**：横向为 Apollo 式 **LQR + 前馈**主控（含速度自适应反馈软化），
 纵向为**实车开环**（仅发期望速度设定值，速度闭环交由电机控制器执行；仿真期保留
 idle 怠速保底）。在 294 m 闭环赛道上可稳定跑完整圈，平均中心线偏差 **0.08 m**，
 转向饱和率 **0%**，弯道无蛇形振荡、直道稳态高频抖动被有效抑制。
+
+> **v2.7 关键改进（相对 v2.6）**：
+> 1. **`use_boundary` 开关真正生效**——此前该 yaml 开关在 `frenet_planner_node` 侧未被读取、
+>    `simulation.launch.py` 又硬编码默认 `true`，导致"默认开车道线检测"。现节点侧补上参数
+>    声明/读取/回调判断，`simulation.launch.py` 默认值改从 `params.yaml` 读取，与
+>    `real_car.launch.py` 对齐。当前 `params.yaml` 默认 `use_boundary=false` + `use_obstacle=false`
+>    （纯跟踪、Frenet 走中心线 ±half_width 兜底走廊）。
+> 2. **弯道稳定性再调优**——进弯提前减速更充分、弯道中道中稳定低速、出弯后平稳慢加速：
+>    `max_lateral_accel` 0.8→**0.7**、`pre_decel_lookahead_m` 8→**18**、`pre_decel_max` 1.5→**1.0**、
+>    `curvature_lookahead_m` 3→**6**、`curvature_smooth_window` 4→**8**、`v_ref_lowpass_alpha`
+>    0.75→**0.5**、`steer_lowpass_alpha` 0.5→**0.9**、`lqr_Q[4]`(e_psi_dot) 0.5→**4.0**。
+>    实跑验证：弯道提前减速、道中稳定低速、出弯平稳缓加速，无极限环/出界。
+> 3. **`path_follower` 闭环赛道投影越界崩溃修复**——loop 模式下 `_projected_index` 的扫描窗口
+>    当 `start>0` 时会出现 `i=n-1`，导致 `path[i+1]`（`path[n]`）`IndexError` 进程崩溃；改为
+>    `i_next=(i+1)%n` wrap 并重写闭环弧长/lookahead 逻辑。
 
 > 本分支完成**仿真层与实车层的融合**：规划-控制-感知核心（你的 `baja_cloud_sim`）不动，
 > 供应商硬件驱动包（华测组合导航 `chcnav`、镭神激光雷达 `lslidar`、毫米波雷达
@@ -136,13 +151,19 @@ RViz 中会以红色半透明 `LINE_STRIP` 显示终点线（`/finish_line_marke
 
 感知开关已拆分为两个**独立**参数，可分别便捷开关：
 
-| 开关 | 默认值 | 作用 |
+| 开关 | 默认值（params.yaml） | 作用 |
 |------|--------|------|
-| `use_boundary` | `true` | `true` 用 `road_analyzer` 真实车道线；`false` Frenet 走 ±half_width 兜底走廊 |
-| `use_obstacle` | `true` | `true` 启动障碍检测发 `/obstacle_markers`；`false` 关闭障碍（纯跟踪） |
+| `use_boundary` | `false` | `true` 用 `road_analyzer` 真实车道线；`false` Frenet 走 ±half_width 兜底走廊 |
+| `use_obstacle` | `false` | `true` 启动障碍检测发 `/obstacle_markers`；`false` 关闭障碍（纯跟踪） |
+
+> **v2.7 起开关真正生效**：此前 `use_boundary` 在 `frenet_planner_node` 侧未被读取、且
+> `simulation.launch.py` 硬编码默认 `true`，导致"默认开车道线检测"、yaml 改了无效。现已
+> 修复——节点补上 `use_boundary` 声明/读取/回调判断，`simulation.launch.py` 默认值改从
+> `params.yaml` 的 `frenet_planner_node.use_boundary/use_obstacle` 读取（与 `real_car.launch.py`
+> 一致）。当前默认 `false` + `false`，即默认纯跟踪、不拉感知链路。
 
 命令行：`--no-boundary` / `--no-obstacle`（脚本）；或 launch 直接传 `use_boundary:=false use_obstacle:=false`。
-yaml 里 `frenet_planner_node.use_obstacle` 亦可单独关障碍（`use_boundary` 由 launch 控制车道线来源）。
+yaml 里 `frenet_planner_node.use_boundary` / `use_obstacle` 均可单独便捷开关。
 
 | 参数 | 说明 |
 |------|------|
@@ -502,7 +523,8 @@ Gazebo `AckermannSteering` 插件将 `<min/max_acceleration>` 与 `<min/max_jerk
 path_follower_node:
   ros__parameters:
     enable_lqr: true
-    lqr_Q: [0.05, 8.0, 2.0, 4.0, 0.5]  # [∫e_y, e_y, ė_y, e_ψ, ė_ψ]
+    lqr_Q: [0.05, 8.0, 2.0, 4.0, 4.0]  # [∫e_y, e_y, ė_y, e_ψ, ė_ψ]
+                                        #   v2.7: lqr_Q[4](ė_ψ) 0.5→4.0, 抑制航向角速度误差→弯道更稳
     lqr_R: 3.0                          # 控制量惩罚（越大转向越柔和）
     lqr_v_norm: 1.5                     # 增益调度归一化速度
     lqr_velocity_recompute_threshold: 1.0  # DARE 重解速度触发阈值 (m/s)
@@ -512,7 +534,7 @@ path_follower_node:
     max_steer_rate: 1.2                 # 控制器侧转向速率上限 (rad/s) ≈ 69°/s — 宽松,
                                         # 让 LQR 修正指令完整到达 EPS; 真实齿条 15°/s
                                         # 约束由 EPS(actuator_adapter)施加, 此处不重复限速
-    steer_lowpass_alpha: 0.5            # 输出一阶低通系数 (0.5 较 0.22 大幅减重相位滞后,
+    steer_lowpass_alpha: 0.9            # 输出一阶低通系数 (v2.7: 0.5→0.9, 进一步减重相位滞后,
                                         # 避免平滑吃掉纠偏高频分量导致蛇形)
     state_lowpass_alpha: 0.45           # 反馈状态(yaw_rate/vel)低通系数
     fb_speed_soften_alpha: 0.6          # 速度自适应反馈软化系数 α (0.6: 高速直道反馈强度减半)
@@ -545,13 +567,16 @@ path_follower_node:
 
 ```yaml
     use_speed_profile: true
-    speed_profile_max: 3.5        # fallback/历史兼容: tier 非法时退回此值
-    max_lateral_accel: 0.8        # 弯道侧向加速度上限 (m/s²) — 实跑验证过能过弯的值
+    speed_profile_max: 4.0        # fallback/历史兼容: tier 非法时退回此值
+    max_lateral_accel: 0.7        # 弯道侧向加速度上限 (m/s²) — v2.7: 0.8→0.7, 弯道更保守更稳
                                 #   (回退自 1.6, 1.6 自跑反而出界更重; 真车建议再降到 0.5~0.6)
-    curvature_lookahead_m: 3.0    # 曲率前瞻+后视距离 (m): 双向约束, 出弯加速延后防弯切直蛇形
-    pre_decel_lookahead_m: 8.0    # 前向预减速前瞻 (m): 进弯前 8 m 起平滑降速, 避免仅弯前 3 m 急刹导致转向饱和
-    pre_decel_max: 1.5            # 预减速段最大减速度 (m/s²): ≤max_decel, 越温和过渡带越长
-    v_ref_lowpass_alpha: 0.75     # v_ref 帧间低通系数: 抹平 10Hz 路径刷新导致的 v_ref 锯齿多峰, 0.75 让弯道减速及时生效
+    curvature_lookahead_m: 6.0    # 曲率前瞻+后视距离 (m): 双向约束, 出弯加速延后防弯切直蛇形
+                                #   v2.7: 3.0→6.0, 更大窗口→进弯更早减速
+    curvature_smooth_window: 8    # 曲率平滑窗口 (v2.7: 4→8), 抑制局部尖峰导致的 v_ref 抖动
+    pre_decel_lookahead_m: 18.0   # 前向预减速前瞻 (m): v2.7: 8→18, 进弯前 18 m 起平滑降速,
+                                #   避免仅弯前急刹导致转向饱和
+    pre_decel_max: 1.0            # 预减速段最大减速度 (m/s²): v2.7: 1.5→1.0, 越温和过渡带越长
+    v_ref_lowpass_alpha: 0.5      # v_ref 帧间低通系数: v2.7: 0.75→0.5, 更平滑抹平 10Hz 刷新锯齿
     desired_clearance: 3.5        # 障碍降速起始距离
     min_speed_obstacle: 2.0
     terrain_slope_threshold: 0.06
@@ -1025,6 +1050,7 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 | **`v2.4`** | **v2.4** | **LQR + 前馈 + 开环纵向** | **纵向改为实车开环(发期望速度设定值, 速度闭环交电机) + 感知开关(`use_perception` / `run_test.sh` 默认关感知) + 车道线真值自动切换** |
 | **`v2.5`** | **v2.5** | **LQR + 前馈 + 开环纵向** | **环境快照/恢复脚本 + 测试缓存清理(`.pytest_cache`/`.claude` 入 ignore) + 安装/运行脚本与文档同步** |
 | **`v2.6`** | **v2.6** | **LQR + 前馈 + 开环纵向** | **仿真层与实车层融合：`src/hardware/` 迁入供应商硬件驱动（chcnav/lslidar/radar/ultrasonic/msg_interfaces/car_autonomous_pkg 仅留 CAN 桥接）；核心节点零改动 + launch remap 对齐；新增实车 launch 与 `run_real*.sh`/`run_record.sh`；`csv_to_centerline`/`path_recorder` 节点；`evaluator` 支持 `use_scenario=false` 实车模式；删除 `ros2_ws/` 与 `run_line.sh`** |
+| **`v2.7`** | **v2.7** | **LQR + 前馈 + 开环纵向** | **弯道稳定性再调优（实跑验证：弯道提前减速、道中稳定低速、出弯平稳缓加速）：`max_lateral_accel` 0.8→0.7、`pre_decel_lookahead_m` 8→18、`pre_decel_max` 1.5→1.0、`curvature_lookahead_m` 3→6、`curvature_smooth_window` 4→8、`v_ref_lowpass_alpha` 0.75→0.5、`steer_lowpass_alpha` 0.5→0.9、`lqr_Q[4]`(ė_ψ) 0.5→4.0；修复 `use_boundary` 开关失效（`frenet_planner_node` 补参数声明/读取/回调判断 + `simulation.launch.py` 默认值改从 `params.yaml` 读取，默认 `false` 纯跟踪）；修复 `path_follower` 闭环赛道投影 `IndexError` 崩溃（loop 模式 `i_next=(i+1)%n` wrap）** |
 
 ### v2.1 相对 v2 的变更
 

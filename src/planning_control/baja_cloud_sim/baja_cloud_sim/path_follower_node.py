@@ -235,6 +235,10 @@ class PathFollowerNode(Node):
         self.declare_parameter("v_ref_lowpass_alpha", 0.4)
         self._v_ref_alpha = float(self.get_parameter("v_ref_lowpass_alpha").value)
         self._v_ref_smoothed = 0.0  # 低通状态
+        # 饱和渐进恢复状态: 转向饱和时 v_ref 钳到此处(取当前速度与 0.6×目标之低),
+        # 脱离饱和后逐帧 ramp 回升到 speed_profile 目标, 而非瞬间跳回(原 *0.6 脱离即全速
+        # 恢复, 正是"减速完该调车身却加速"的根因). -1.0 表示当前不在饱和保持态.
+        self._vref_sat_hold: float = -1.0
         # speed profile 取值点: 用 s-projection(有 last_idx 锚定) 替代全局欧氏最近点,
         # 避免 10Hz 路径刷新时取值索引在弯道跳动.
         self._vref_proj_last_idx: int = 0
@@ -786,7 +790,7 @@ class PathFollowerNode(Node):
         if lqr_primary:
             idx = _projected_index(effective_path, self._path_arc_lengths,
                                    self.position, self._last_proj_idx,
-                                   self._s_proj_lookahead)
+                                   self._s_proj_lookahead, loop=self._cl_loop)
             # Guard against a length mismatch between the path and its cached
             # arc-lengths (e.g. during freewheel after planner infeasibility),
             # which would otherwise raise IndexError and kill the node.
@@ -796,6 +800,9 @@ class PathFollowerNode(Node):
                 idx = min(max(idx, 0), len(effective_path) - 1)
                 self._last_proj_idx = max(0, idx - 3)
                 ref_x, ref_y = effective_path[idx]
+                _prog_pct = self._lap_idx_progress/len(self._cl_xy)*100 if len(self._cl_xy) else 0
+                if self._cl_loop and _prog_pct > 80.0:
+                    self.get_logger().info(f"[LAT-DIAG] prog={_prog_pct:.0f}% idx={idx}/{len(effective_path)} lqr_primary={lqr_primary} e_psi={command.get('heading_error',0):.2f} e_y={command.get('e_y',0):.2f} ref=({ref_x:.1f},{ref_y:.1f}) pos=({self.position[0]:.1f},{self.position[1]:.1f})")
             ref_yaw = self._path_yaws[idx] if idx < len(self._path_yaws) else self.yaw_world
             kappa = self._path_curvatures[idx] if idx < len(self._path_curvatures) else 0.0
             ref = {"x": ref_x, "y": ref_y, "yaw": ref_yaw, "kappa": kappa}
@@ -854,9 +861,13 @@ class PathFollowerNode(Node):
             nearest = _projected_index(
                 self.path, self._path_arc_lengths,
                 self.position, self._vref_proj_last_idx,
-                self._s_proj_lookahead,
+                self._s_proj_lookahead, loop=self._cl_loop,
             ) if len(self.path) >= 2 else 0
-            self._vref_proj_last_idx = max(0, nearest)
+            # 与 LQR 投影锚定保持一致: 每帧把锚点设到 (nearest-3) 而非累积 nearest.
+            # 否则 planned_path 每帧整体重算(起点随车移动)时, 锚点会累积到路径末尾,
+            # 下一帧只在末尾段投影→取到路径前段直道的高限速(4.0)→车以高速冲进弯出界卡死.
+            # 实测: nearest 在 5~50 间循环、v_raw 在弯道帧仍取 4.00 即此 bug 所致.
+            self._vref_proj_last_idx = max(0, nearest - 3)
             if nearest < len(self._speed_profile):
                 v_ref_raw = self._speed_profile[nearest]
                 # 一阶低通: 平滑 10Hz 路径刷新导致的 v_ref 帧间跳变
@@ -875,10 +886,28 @@ class PathFollowerNode(Node):
                         f'raw={v_ref_raw:.1f} actual={self._current_speed:.1f}')
 
         # P1: 反馈饱和时主动降速 — 转向已贴物理极限, 继续高速只会累积偏差脱轨.
-        # 降速到 0.6 倍给 LQR 反馈项和 EPS 追赶余量, 车速降后所需转向角自然下降,
-        # 反馈脱离饱和后速度恢复. 这不是 EMERGENCY(那是 v=0), 而是"温和减速等反馈追上".
+        # 原实现 v_ref *= 0.6 为瞬时降速, 脱离饱和当帧立刻回到 speed_profile 原值,
+        # 导致弯里"减速完该调车身却加速". 改为: 饱和时把 v_ref 钳到一个较低目标
+        # (当前速度 与 0.6×目标 之低, 保证真降速), 脱离饱和后逐帧 ramp 回升到目标,
+        # 让转向角先降到非饱和区、车身修正完成, 速度才温和恢复.
         if command.get("saturated", False) and not braking_to_stop:
-            v_ref *= 0.6
+            sat_target = min(self._current_speed, 0.6 * v_ref)
+            self._vref_sat_hold = sat_target
+            v_ref = sat_target
+        else:
+            # 脱离饱和: 若在饱和保持态, 用低通(0.1 系数)逐步回升而非瞬跳.
+            if self._vref_sat_hold >= 0.0:
+                # 指数回升到 speed_profile 目标 v_ref(此时 v_ref 已是未饱和的目标值)
+                self._vref_sat_hold = (
+                    0.1 * v_ref + 0.9 * self._vref_sat_hold
+                )
+                # 回升足够接近目标(差距<0.2)则退出保持态, 直接跟目标
+                if (v_ref - self._vref_sat_hold) < 0.2:
+                    self._vref_sat_hold = -1.0
+                    v_ref = v_ref
+                else:
+                    v_ref = self._vref_sat_hold
+            # 非饱和保持态: v_ref 保持 speed_profile 原值, 不动
 
         # ── Finish / 终点逻辑：锚定停车目标，平滑减速至停止 ──
         # NOTE: _update_progress / _update_finish_arm already ran early in
@@ -1173,7 +1202,7 @@ class PathFollowerNode(Node):
             self.get_logger().info("Finish reached: vehicle stopped.")
 
 
-def _projected_index(path, arc_lengths, position, last_idx=0, lookahead_s=0.8) -> int:
+def _projected_index(path, arc_lengths, position, last_idx=0, lookahead_s=0.8, loop=False) -> int:
     """s‑coordinate projection: find the closest point on the polyline
     (clamped perpendicular projection onto each segment), then look ahead
     by *lookahead_s* metres of arc length.
@@ -1189,9 +1218,23 @@ def _projected_index(path, arc_lengths, position, last_idx=0, lookahead_s=0.8) -
     best_s_proj = 0.0
     # Scan forward from last known index; find the segment that is
     # closest to the vehicle (clamped projection).
-    for i in range(start, len(path) - 1):
+    # 闭环(loop)时从 start 绕回 0 连续扫整条路径: 否则车在赛道末翻圈、
+    # planned_path 起点从赛道开头重生时, 上一帧 last_idx 接近路径末尾会跳过
+    # 开头那些真正最近的点, 投影错取赛道末点→LQR 参考点错位→转向归零失控.
+    n = len(path)
+    total_len = arc_lengths[-1] if arc_lengths else 0.0
+    # 扫描起点: 闭环时从 start 绕回 0 连续扫整条路径(车在赛道末翻圈、planned_path
+    # 起点从赛道开头重生时, 上一帧 last_idx 接近路径末尾会跳过开头真正最近的点,
+    # 投影错取赛道末点→LQR 参考点错位→转向归零失控). 扫描覆盖 0..n-2 所有段,
+    # 顺序从 start 开始绕回, 保证不漏段也不越界(path[i+1] 在闭环末段 wrap 到 0).
+    if loop:
+        scan = [(start + k) % (n - 1) for k in range(n - 1)]
+    else:
+        scan = range(start, n - 1)
+    for i in scan:
         ax, ay = path[i]
-        bx, by = path[i + 1]
+        i_next = (i + 1) % n if loop else i + 1  # 闭环末段连接起点, 不越界
+        bx, by = path[i_next]
         abx, aby = bx - ax, by - ay
         seg_len2 = abx * abx + aby * aby
         if seg_len2 < 1e-12:
@@ -1204,10 +1247,22 @@ def _projected_index(path, arc_lengths, position, last_idx=0, lookahead_s=0.8) -
         if d2 < best_d2:
             best_d2 = d2
             s_i = arc_lengths[i] if i < len(arc_lengths) else 0.0
-            s_next = arc_lengths[i + 1] if i + 1 < len(arc_lengths) else s_i
+            if loop and i_next == 0:
+                # 闭环最后一段: 弧长跨过终点连回起点(下一圈 0)
+                s_next = total_len + (arc_lengths[0] if arc_lengths else 0.0)
+            else:
+                s_next = arc_lengths[i_next] if i_next < len(arc_lengths) else s_i
             best_s_proj = s_i + t * (s_next - s_i)
     # Look ahead by lookahead_s metres of arc length.
     target_s = best_s_proj + lookahead_s
+    # 闭环: 若目标 s 超过一圈总长, 折算回本圈(从起点重新查找)
+    if loop and total_len > 0:
+        target_s = target_s % total_len
+        # 在 [0, total_len) 内找第一个弧长 >= target_s 的索引
+        for j in range(0, len(arc_lengths)):
+            if arc_lengths[j] >= target_s:
+                return j
+        return 0
     for j in range(0, len(arc_lengths)):
         if arc_lengths[j] >= target_s:
             return j

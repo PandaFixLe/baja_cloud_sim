@@ -37,6 +37,7 @@ class FrenetPlannerNode(Node):
             ("default_half_width", 4.0),
             ("min_half_width", 1.5),
             ("use_obstacle", True),
+            ("use_boundary", True),
         ):
             self.declare_parameter(name, default)
         self.origin_lat = float(self.get_parameter("origin_latitude").value)
@@ -44,6 +45,7 @@ class FrenetPlannerNode(Node):
         self.default_half_width = float(self.get_parameter("default_half_width").value)
         self.min_half_width = float(self.get_parameter("min_half_width").value)
         self.use_obstacle = bool(self.get_parameter("use_obstacle").value)
+        self.use_boundary = bool(self.get_parameter("use_boundary").value)
         self.config = PlannerConfig(
             horizon_m=float(self.get_parameter("horizon_m").value),
             center_weight=float(self.get_parameter("center_weight").value),
@@ -104,6 +106,11 @@ class FrenetPlannerNode(Node):
         self.yaw_world = nav_to_world_yaw(self.yaw_navigation)
 
     def _boundary_callback(self, message: MarkerArray) -> None:
+        if not self.use_boundary:
+            # 关闭车道线检测：清空任何残留边界, Frenet 用中心线 ±half_width 兜底走廊。
+            self.left_world = []
+            self.right_world = []
+            return
         if self.position is None:
             return
         for marker in message.markers:

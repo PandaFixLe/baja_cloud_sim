@@ -8,8 +8,10 @@ USE_RVIZ=true
 USE_GZ_GUI=true
 USE_VIDEO=true
 FINISH_MODE="none"
-USE_BOUNDARY=true
-USE_OBSTACLE=true
+# 感知开关默认不强制：留空则 launch 用 yaml(params.yaml) 的 use_boundary/use_obstacle 默认。
+# 只有用户显式加 --no-boundary/--no-obstacle/--with-perception 时才在命令行覆盖。
+USE_BOUNDARY=""
+USE_OBSTACLE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seed) SEED="$2"; shift 2 ;;
@@ -18,11 +20,19 @@ while [[ $# -gt 0 ]]; do
     --no-rviz) USE_RVIZ=false; shift ;;
     --headless-gazebo) USE_GZ_GUI=false; shift ;;
     --no-video) USE_VIDEO=false; shift ;;
+    --with-perception) USE_BOUNDARY=true; USE_OBSTACLE=true; shift ;;
     --no-boundary) USE_BOUNDARY=false; shift ;;
     --no-obstacle) USE_OBSTACLE=false; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+# 仅当用户显式设置过才把 use_boundary/use_obstacle 传给 launch；
+# 否则不传 → launch 回退到 yaml 默认值(尊重你在 params.yaml 的手动设置)。
+LAUNCH_BOUNDARY=""
+LAUNCH_OBSTACLE=""
+if [[ -n "$USE_BOUNDARY" ]]; then LAUNCH_BOUNDARY="use_boundary:=$USE_BOUNDARY"; fi
+if [[ -n "$USE_OBSTACLE" ]]; then LAUNCH_OBSTACLE="use_obstacle:=$USE_OBSTACLE"; fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source /opt/ros/humble/setup.bash
@@ -66,8 +76,8 @@ if [[ "$FINISH_MODE" == "line" ]]; then
     use_rviz:="$USE_RVIZ" \
     use_gz_gui:="$USE_GZ_GUI" \
     use_video:="$USE_VIDEO" \
-    use_boundary:="$USE_BOUNDARY" \
-    use_obstacle:="$USE_OBSTACLE" \
+    $LAUNCH_BOUNDARY \
+    $LAUNCH_OBSTACLE \
     video_path:="$VIDEO_PATH"
 else
   GENERATED="$SCRIPT_DIR/runtime/scenario_$SEED"
@@ -90,8 +100,8 @@ else
     use_rviz:="$USE_RVIZ" \
     use_gz_gui:="$USE_GZ_GUI" \
     use_video:="$USE_VIDEO" \
-    use_boundary:="$USE_BOUNDARY" \
-    use_obstacle:="$USE_OBSTACLE" \
+    $LAUNCH_BOUNDARY \
+    $LAUNCH_OBSTACLE \
     video_path:="$VIDEO_PATH"
 fi
 

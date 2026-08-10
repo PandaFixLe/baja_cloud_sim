@@ -1,5 +1,11 @@
+# Gazebo(gz-sim) 默认把仿真时钟发布在 namespaced 话题 /world/<world_name>/clock
+# (本工程 world 名为 baja_track), 而非旧式的 /clock。原配置订阅 /clock 会触发
+# Gazebo "Found additional publishers on /clock, using namespaced clock" 警告,
+# 使 ROS /clock 断续跳变 → 所有 use_sim_time=True 节点的 TF 缓冲反复 reset →
+# RViz 持续 "jump back in time"/Resetting RViz → 多节点显示闪烁。
+# 修正: 直接订阅 Gazebo 实际发布的 namespaced clock 话题。
 - ros_topic_name: "/clock"
-  gz_topic_name: "/clock"
+  gz_topic_name: "/world/baja_track/clock"
   ros_type_name: "rosgraph_msgs/msg/Clock"
   gz_type_name: "gz.msgs.Clock"
   direction: GZ_TO_ROS

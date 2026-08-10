@@ -3,8 +3,10 @@
 set -eo pipefail
 
 USE_RVIZ=true
-USE_BOUNDARY=true
-USE_OBSTACLE=true
+# 感知开关默认不强制：留空则 launch 用 yaml(real_car_params.yaml) 默认。
+# 仅显式 flag 才覆盖。
+USE_BOUNDARY=""
+USE_OBSTACLE=""
 LISTEN_ADDRESS="0.0.0.0"
 LISTEN_PORT=5005
 while [[ $# -gt 0 ]]; do
@@ -17,6 +19,11 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+LAUNCH_BOUNDARY=""
+LAUNCH_OBSTACLE=""
+if [[ -n "$USE_BOUNDARY" ]]; then LAUNCH_BOUNDARY="use_boundary:=$USE_BOUNDARY"; fi
+if [[ -n "$USE_OBSTACLE" ]]; then LAUNCH_OBSTACLE="use_obstacle:=$USE_OBSTACLE"; fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source /opt/ros/humble/setup.bash
@@ -31,5 +38,5 @@ mkdir -p "$RESULTS"
 
 ros2 launch baja_cloud_sim real_car_remote.launch.py \
   use_rviz:="$USE_RVIZ" \
-  use_boundary:="$USE_BOUNDARY" \
-  use_obstacle:="$USE_OBSTACLE"
+  $LAUNCH_BOUNDARY \
+  $LAUNCH_OBSTACLE

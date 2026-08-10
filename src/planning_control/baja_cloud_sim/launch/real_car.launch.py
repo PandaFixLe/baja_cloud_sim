@@ -14,6 +14,7 @@ Usage:
   ros2 launch baja_cloud_sim real_car.launch.py csv_file:=/path/to/recorded_path.csv
 """
 
+import yaml
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -23,6 +24,19 @@ from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+
+
+def _yaml_bool(params_path, node, key, fallback):
+    """从 yaml 的 node.ros__parameters[key] 读取 bool 默认；缺失则 fallback。"""
+    try:
+        with open(params_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        val = data.get(node, {}).get("ros__parameters", {}).get(key)
+        if isinstance(val, bool):
+            return "true" if val else "false"
+    except FileNotFoundError:
+        pass
+    return "true" if fallback else "false"
 
 
 def generate_launch_description():
@@ -35,6 +49,11 @@ def generate_launch_description():
     use_boundary = LaunchConfiguration("use_boundary")
     use_obstacle = LaunchConfiguration("use_obstacle")
 
+    # use_boundary / use_obstacle 默认值从 yaml(real_car_params.yaml) 读取，
+    # 命令行 --use-boundary/--use-obstacle 仍可临时覆盖。
+    default_boundary = _yaml_bool(params, "frenet_planner_node", "use_boundary", True)
+    default_obstacle = _yaml_bool(params, "frenet_planner_node", "use_obstacle", True)
+
     # Common remaps: real-car hardware topics → simulation-standard names
     hw_remappings = [
         ("/chcnav/devpvt", "/gps/fix"),
@@ -46,12 +65,14 @@ def generate_launch_description():
         DeclareLaunchArgument("csv_file", default_value="recorded_path.csv",
                               description="Recorded CSV path file for Frenet centerline"),
         DeclareLaunchArgument("use_rviz", default_value="true"),
-        DeclareLaunchArgument("use_boundary", default_value="true",
+        DeclareLaunchArgument("use_boundary", default_value=default_boundary,
                               description="true: road_analyzer 发布真实车道线(/road_boundary_markers)。"
-                                          "false: Frenet 改用中心线 ±half_width 兜底走廊"),
-        DeclareLaunchArgument("use_obstacle", default_value="true",
+                                          "false: Frenet 改用中心线 ±half_width 兜底走廊。"
+                                          "默认取自 real_car_params.yaml frenet_planner_node.use_boundary。"),
+        DeclareLaunchArgument("use_obstacle", default_value=default_obstacle,
                               description="true: 启动障碍检测 → /obstacle_markers。"
-                                          "false: 关闭障碍检测, frenet_planner 不消费障碍消息"),
+                                          "false: 关闭障碍检测, frenet_planner 不消费障碍消息。"
+                                          "默认取自 real_car_params.yaml frenet_planner_node.use_obstacle。"),
 
         # ── Hardware: CHCNAV combined navigation (GNSS + IMU on vcan2) ──
         Node(

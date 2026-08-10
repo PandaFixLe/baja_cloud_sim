@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -7,6 +8,19 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+
+
+def _yaml_bool(params_path, node, key, fallback):
+    """从 yaml 的 node.ros__parameters[key] 读取 bool 默认；缺失则 fallback。"""
+    try:
+        with open(params_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        val = data.get(node, {}).get("ros__parameters", {}).get(key)
+        if isinstance(val, bool):
+            return "true" if val else "false"
+    except FileNotFoundError:
+        pass
+    return "true" if fallback else "false"
 
 
 def generate_launch_description():
@@ -27,6 +41,11 @@ def generate_launch_description():
     rviz = str(share / "config" / "simulation.rviz")
     robot_description = (share / "urdf" / "baja_vehicle.urdf").read_text(encoding="utf-8")
 
+    # use_boundary / use_obstacle 默认值从 yaml(params.yaml) 读取，
+    # 命令行 --use-boundary/--use-obstacle 仍可临时覆盖。
+    default_boundary = _yaml_bool(params, "frenet_planner_node", "use_boundary", True)
+    default_obstacle = _yaml_bool(params, "frenet_planner_node", "use_obstacle", True)
+
     return LaunchDescription([
         DeclareLaunchArgument("world_file"),
         DeclareLaunchArgument("scenario_file"),
@@ -37,10 +56,11 @@ def generate_launch_description():
         DeclareLaunchArgument("video_path", default_value="results/gazebo.mp4"),
         DeclareLaunchArgument("finish_mode", default_value="none",
                               description="Finish/终点逻辑: none | line | circle | time"),
-    DeclareLaunchArgument("use_boundary", default_value="true",
+    DeclareLaunchArgument("use_boundary", default_value=default_boundary,
                           description="true: 启动 road_analyzer 发布真实车道线(/road_boundary_markers)。"
-                                      "false: Frenet 改用中心线 ±half_width 兜底走廊(不依赖车道线检测)。"),
-    DeclareLaunchArgument("use_obstacle", default_value="true",
+                                      "false: Frenet 改用中心线 ±half_width 兜底走廊(不依赖车道线检测)。"
+                                      "默认取自 params.yaml frenet_planner_node.use_boundary。"),
+    DeclareLaunchArgument("use_obstacle", default_value=default_obstacle,
                           description="true: 启动障碍检测链路(gz_pcl_bridge + lidar_sim 障碍部分)，"
                                       "发布 /obstacle_markers。false: 关闭障碍检测，frenet_plceiver 不消费障碍消息。"),
         IncludeLaunchDescription(

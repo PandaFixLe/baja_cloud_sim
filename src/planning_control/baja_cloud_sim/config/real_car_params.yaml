@@ -26,6 +26,10 @@ frenet_planner_node:
     min_half_width: 1.5
     # 实车障碍检测开关；false 时不消费 /obstacle_markers(纯跟踪)。等同 launch use_obstacle。
     use_obstacle: true
+    # 实车车道线检测开关；false 时不启动 road_analyzer，Frenet 用中心线(CSV航点)
+    # 自带 half_width / fallback default_half_width 保底走廊。等同 launch use_boundary；
+    # yaml 改此处即可便捷切换，命令行 --use-boundary 可临时覆盖。
+    use_boundary: true
     min_obstacle_range: 0.5
 
 path_follower_node:
@@ -41,7 +45,7 @@ path_follower_node:
     min_speed_obstacle: 2.0
     lqr_R: 3.0
     lqr_v_norm: 1.5
-    lqr_Q: [0.05, 8.0, 2.0, 4.0, 0.5]
+    lqr_Q: [0.05, 8.0, 2.0, 4.0, 4.0]
     fb_speed_soften_alpha: 0.6
     fb_speed_ref: 2.5
     fb_speed_beta_min: 0.4
@@ -50,15 +54,16 @@ path_follower_node:
     lqr_velocity_recompute_threshold: 1.0
     dare_solve_interval: 50
     max_steer_rate: 1.2
-    steer_lowpass_alpha: 0.5
+    steer_lowpass_alpha: 0.9
     state_lowpass_alpha: 0.45
     cmd_steer_deadband_deg: 1.5
     s_proj_lookahead: 0.8
-    max_lateral_accel: 0.8
-    curvature_lookahead_m: 3.0
-    pre_decel_lookahead_m: 8.0
-    pre_decel_max: 1.5
-    v_ref_lowpass_alpha: 0.75
+    max_lateral_accel: 0.7
+    curvature_lookahead_m: 6.0
+    pre_decel_lookahead_m: 18.0
+    pre_decel_max: 1.0
+    v_ref_lowpass_alpha: 0.5
+    curvature_smooth_window: 8
     terrain_slope_threshold: 0.06
     terrain_min_speed: 1.0
     use_terrain_profile: false
