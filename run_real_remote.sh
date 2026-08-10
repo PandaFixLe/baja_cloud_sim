@@ -3,13 +3,15 @@
 set -eo pipefail
 
 USE_RVIZ=true
-USE_PERCEPTION=true
+USE_BOUNDARY=true
+USE_OBSTACLE=true
 LISTEN_ADDRESS="0.0.0.0"
 LISTEN_PORT=5005
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-rviz) USE_RVIZ=false; shift ;;
-    --no-perception) USE_PERCEPTION=false; shift ;;
+    --no-boundary) USE_BOUNDARY=false; shift ;;
+    --no-obstacle) USE_OBSTACLE=false; shift ;;
     --listen-address) LISTEN_ADDRESS="$2"; shift 2 ;;
     --listen-port) LISTEN_PORT="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -29,4 +31,5 @@ mkdir -p "$RESULTS"
 
 ros2 launch baja_cloud_sim real_car_remote.launch.py \
   use_rviz:="$USE_RVIZ" \
-  use_perception:="$USE_PERCEPTION"
+  use_boundary:="$USE_BOUNDARY" \
+  use_obstacle:="$USE_OBSTACLE"

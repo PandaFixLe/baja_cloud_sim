@@ -35,11 +35,15 @@ class FrenetPlannerNode(Node):
             ("clearance_weight", 12.0), ("desired_clearance", 1.2),
             ("vehicle_length", 3.0), ("vehicle_width", 1.5),
             ("default_half_width", 4.0),
+            ("min_half_width", 1.5),
+            ("use_obstacle", True),
         ):
             self.declare_parameter(name, default)
         self.origin_lat = float(self.get_parameter("origin_latitude").value)
         self.origin_lon = float(self.get_parameter("origin_longitude").value)
         self.default_half_width = float(self.get_parameter("default_half_width").value)
+        self.min_half_width = float(self.get_parameter("min_half_width").value)
+        self.use_obstacle = bool(self.get_parameter("use_obstacle").value)
         self.config = PlannerConfig(
             horizon_m=float(self.get_parameter("horizon_m").value),
             center_weight=float(self.get_parameter("center_weight").value),
@@ -110,6 +114,9 @@ class FrenetPlannerNode(Node):
                 self.right_world = points
 
     def _obstacle_callback(self, message: MarkerArray) -> None:
+        if not self.use_obstacle:
+            self.obstacles = []
+            return
         if self.position is None:
             return
         obstacles = []
@@ -167,7 +174,7 @@ class FrenetPlannerNode(Node):
         return best_i
 
     def _plan(self) -> None:
-        if self.position is None or len(self.centerline) < 3 or not self.left_world or not self.right_world:
+        if self.position is None or len(self.centerline) < 3:
             return
         n = len(self.centerline)
         loop = math.hypot(self.centerline[0]["x"] - self.centerline[-1]["x"],
@@ -207,6 +214,16 @@ class FrenetPlannerNode(Node):
                 left_limits[index] = max(left_limits[index], left)
             if right is not None:
                 right_limits[index] = min(right_limits[index], right)
+            # 无条件兜底：真实边界缺失或退化(半宽 < min_half_width)时，
+            # 用中心线点自带 half_width(闭环中段 3.75m/直线 4.0m, fallback default_half_width)
+            # 沿法向展开 ±half_width 作为保底走廊。仿真实车统一, 不依赖任何外部边界消息源。
+            ref_hw = self.centerline[index].get("half_width", self.default_half_width)
+            if ref_hw < self.min_half_width:
+                ref_hw = self.default_half_width
+            if left is None or left_limits[index] < self.min_half_width:
+                left_limits[index] = ref_hw
+            if right is None or -right_limits[index] < self.min_half_width:
+                right_limits[index] = -ref_hw
         result = plan_frenet_path(
             self.centerline, self.last_nearest, self.position,
             left_limits, right_limits, self.obstacles, self.config,

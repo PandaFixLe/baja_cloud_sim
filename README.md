@@ -129,20 +129,31 @@ RViz 中会以红色半透明 `LINE_STRIP` 显示终点线（`/finish_line_marke
 使用独立的 `GZ_PARTITION`、结果写入 `results/flat_seed_0/`。
 因此**可与 `run.sh` 并发运行**而互不干扰。
 
-**默认 `use_perception=false`（关闭 LiDAR 感知链路）**：启动时不拉 `gz_pcl_bridge`
-与 `lidar_sim`，由 `truth_perception` 自动发**车道线真值**（`/road_boundary_markers`），
-让你只跑规划-控制核心验证算法。若需恢复完整感知，加 `--with-perception`。
+**默认 `use_boundary=false` + `use_obstacle=false`（关闭感知）**：不拉 `gz_pcl_bridge`
+与 `lidar_sim`，Frenet 用**中心线 ±half_width 兜底走廊**（`/road_boundary_markers` 不再由任何
+节点发布，Frenet 内部兜底），且 `frenet_planner` 不消费障碍消息，让你只跑规划-控制核心验证算法。
+若需恢复完整感知，加 `--with-perception`（等价于 `use_boundary=true use_obstacle=true`）。
+
+感知开关已拆分为两个**独立**参数，可分别便捷开关：
+
+| 开关 | 默认值 | 作用 |
+|------|--------|------|
+| `use_boundary` | `true` | `true` 用 `road_analyzer` 真实车道线；`false` Frenet 走 ±half_width 兜底走廊 |
+| `use_obstacle` | `true` | `true` 启动障碍检测发 `/obstacle_markers`；`false` 关闭障碍（纯跟踪） |
+
+命令行：`--no-boundary` / `--no-obstacle`（脚本）；或 launch 直接传 `use_boundary:=false use_obstacle:=false`。
+yaml 里 `frenet_planner_node.use_obstacle` 亦可单独关障碍（`use_boundary` 由 launch 控制车道线来源）。
 
 | 参数 | 说明 |
 |------|------|
 | `--with-perception` | 恢复完整 LiDAR 感知链路（默认关） |
+| `--no-boundary` / `--no-obstacle` | 单独关闭车道线 / 障碍检测 |
 | `--seed` / `--finish-mode` / `--no-rviz` / `--headless-gazebo` / `--no-video` | 同 `run.sh` |
 
-> **也可对任意 launch 直接传参**关闭感知：
-> `ros2 launch baja_cloud_sim simulation.launch.py world_file:=... scenario_file:=... use_perception:=false`
-> launch 会在 `use_perception=false` 时自动把 `truth_perception.publish_ground_truth_boundary`
-> 设为 `true`（感知开启时自动为 `false`，避免与 `road_analyzer` 在 `/road_boundary_markers`
-> 上双发布冲突）。
+> **也可对任意 launch 直接传参**关闭某一感知：
+> `ros2 launch baja_cloud_sim simulation.launch.py world_file:=... scenario_file:=... use_boundary:=false use_obstacle:=false`
+> 此时 Frenet 不再依赖任何外部车道线消息，自动用中心线 ±half_width 兜底；`truth_perception`
+> 不再发布 `/road_boundary_markers`（已移除真值边界兜底，避免与 `road_analyzer` 双发布冲突）。
 
 ---
 
@@ -1271,6 +1282,25 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
    `config/real_car.rviz`。
 7. **删除冗余**——原 `ros2_ws/` 目录（硬件包已迁入 `src/hardware/`，用户已有备份）与
    `run_line.sh`（直线赛道逻辑已并入 `run.sh --finish-mode line`）均删除。
+8. **感知开关重构（`use_perception` 拆为 `use_boundary` + `use_obstacle`）**——
+   - 旧 `use_perception` 一个总开关拆分为两个**正交独立**开关：
+     - `use_boundary`（默认 `true`）：`true` 用 `road_analyzer` 真实车道线（`/road_boundary_markers`）；
+       `false` 时 Frenet 改用**中心线 ±half_width 兜底走廊**，不再依赖任何外部车道线消息源；
+     - `use_obstacle`（默认 `true`）：`true` 启动障碍检测发 `/obstacle_markers`；`false` 时
+       `frenet_planner` 不消费障碍消息（纯跟踪）。两者均可命令行（`--no-boundary`/`--no-obstacle`）
+       或 yaml（`frenet_planner_node.use_obstacle`）便捷调整。
+   - **移除 `truth_perception` 的 `publish_ground_truth_boundary` 真值边界发布**（含 `MarkerArray`
+     发布者、`_boundary_marker` 方法及相关死 import）——车道线不再由真值节点中转，彻底消除
+     "仿真传递冗余真值"与"和 road_analyzer 双发布冲突"问题；`truth_perception` 仅发定位/GPS/IMU/
+     中心线/TF。
+   - **Frenet 内部加无条件 ±half_width 兜底**：`_plan` 早返回不再因 `left/right_world` 缺失而 return；
+     边界构建时若真实边界缺失或退化（半宽 `< min_half_width`，默认 1.5m），用中心线点自带
+     `half_width`（闭环中段 3.75m / 直线 4.0m，fallback `default_half_width` 4.0m）沿法向 ±half_width
+     展开。仿真实车统一，实车无 scenario 真值时也能稳跑。
+   - `lidar_sim.launch.py` 拆出 `use_boundary`/`use_obstacle`，分别控制 `road_analyzer` 的 remap 与
+     `obstacle_adapter`+`surface_detector` 的启动；`gz_pcl_bridge` 与 `lidar_sim` include 条件改为
+     `use_boundary OR use_obstacle`。`run.sh`/`run_test.sh`/`run_real.sh`/`run_real_remote.sh` 同步
+     替换为新开关（`run_test.sh` 默认 `use_boundary=false use_obstacle=false` 纯跟踪）。
 
 > **融合原则**：核心算法与控制器（横向 LQR + 前馈、纵向实车开环、EPS 仿真层模型）保持不动；
 > 平台差异（仿真 Gazebo 真值 vs 实车硬件传感器、Gazebo cmd_vel vs VCU CAN）**仅由 launch

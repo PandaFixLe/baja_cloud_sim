@@ -18,9 +18,10 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -30,7 +31,8 @@ def generate_launch_description():
     rviz = str(share / "config" / "real_car.rviz")
 
     use_rviz = LaunchConfiguration("use_rviz")
-    use_perception = LaunchConfiguration("use_perception")
+    use_boundary = LaunchConfiguration("use_boundary")
+    use_obstacle = LaunchConfiguration("use_obstacle")
 
     hw_remappings = [
         ("/chcnav/devpvt", "/gps/fix"),
@@ -40,8 +42,12 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument("use_rviz", default_value="true"),
-        DeclareLaunchArgument("use_perception", default_value="true",
-                              description="Start LiDAR perception for situational awareness"),
+        DeclareLaunchArgument("use_boundary", default_value="true",
+                              description="true: road_analyzer 发布真实车道线(/road_boundary_markers)。"
+                                          "false: Frenet 改用中心线 ±half_width 兜底走廊"),
+        DeclareLaunchArgument("use_obstacle", default_value="true",
+                              description="true: 启动障碍检测 → /obstacle_markers。"
+                                          "false: 关闭障碍检测(视驾模式下一般关闭)"),
 
         # ── Hardware: CHCNAV ──
         Node(
@@ -68,15 +74,19 @@ def generate_launch_description():
             arguments=["-0.5", "0", "1.05", "0", "0", "0", "base_link", "laser_link"],
         ),
 
-        # ── Perception (optional) ──
-        Node(
-            package="lidar3d_bringup",
-            executable="lidar_sim",
-            name="lidar3d_perception",
-            parameters=[{"use_sim_time": False}],
-            remappings=[("/lidar/points", "/cx/lslidar_point_cloud")],
-            condition=IfCondition(use_perception),
-            output="screen",
+        # ── Perception (optional, 视驾模式下一般只需障碍感知) ──
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                str(Path(get_package_share_directory("lidar3d_bringup")) / "launch" / "lidar_sim.launch.py")),
+            launch_arguments={
+                "use_rviz": "false",
+                "cloud_topic": "/cx/lslidar_point_cloud",
+                "target_frame": "base_link",
+                "use_boundary": use_boundary,
+                "use_obstacle": use_obstacle,
+            }.items(),
+            condition=IfCondition(
+                PythonExpression(["'", use_boundary, "' == 'true' or '", use_obstacle, "' == 'true'"])),
         ),
 
         # ── Remote control (UDP → /cmd_control) ──

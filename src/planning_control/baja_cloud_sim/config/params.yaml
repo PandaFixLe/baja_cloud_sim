@@ -9,9 +9,6 @@ truth_perception_node:
     # Phase-0 platform remap: simulation reads Gazebo ground-truth odometry.
     # On the real car this node is replaced by a real localization node.
     ground_truth_odom_topic: "/ground_truth/odom"
-    # 车道线真值开关默认值 false；实际由 simulation.launch.py 按 use_perception
-    # 动态覆盖(感知关→true 发真值, 感知开→false 交给 road_analyzer, 避免双发布冲突)。
-    publish_ground_truth_boundary: false
 
 frenet_planner_node:
   ros__parameters:
@@ -24,6 +21,14 @@ frenet_planner_node:
     desired_clearance: 1.2
     vehicle_length: 3.0
     vehicle_width: 1.5
+    # 车道线兜底走廊：use_boundary=false 或真实边界缺失/退化时，
+    # Frenet 用中心线点自带 half_width(闭环中段3.75m/直线4.0m，fallback default_half_width)
+    # 沿法向 ±half_width 生成保底走廊。仿真实车统一，不依赖外部车道线消息源。
+    default_half_width: 4.0
+    min_half_width: 1.5
+    # 是否消费 /obstacle_markers 障碍物消息；false 时 frenet 不避障(纯跟踪)。
+    # 等同 launch 的 use_obstacle 开关，yaml 改此处即可便捷切换。
+    use_obstacle: true
     # 忽略传感器原点附近(车体自身/地面杂波)的虚假障碍检测，避免起点附近出现幽灵膨胀框
     min_obstacle_range: 0.5
 

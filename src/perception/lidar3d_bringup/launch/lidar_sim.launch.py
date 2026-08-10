@@ -36,6 +36,8 @@ def launch_setup(context, *args, **kwargs):
     cloud_topic = LaunchConfiguration('cloud_topic').perform(context)
     sdf_sensor_frame = LaunchConfiguration('sdf_sensor_frame').perform(context)
     target_frame = LaunchConfiguration('target_frame').perform(context)
+    use_obstacle = LaunchConfiguration('use_obstacle').perform(context)
+    use_boundary = LaunchConfiguration('use_boundary').perform(context)
 
     # TF bridge: base_link → LiDAR sensor frame (offsets from SDF)
     sensor_tf_node = Node(
@@ -73,14 +75,15 @@ def launch_setup(context, *args, **kwargs):
         }],
     )
 
-    # Surface-fitting obstacle detector (C++)
+    # Surface-fitting obstacle detector (C++) — 仅 use_obstacle=true 时启动
     surface_detector_node = Node(
         package='lidar3d_perception_cpp', executable='surface_detector_node',
         name='surface_detector', output='screen',
         parameters=[params_file, {'use_sim_time': True}],
+        condition=IfCondition(use_obstacle),
     )
 
-    # Obstacle adapter: 4-class → 2-class + TF → /obstacle_markers
+    # Obstacle adapter: 4-class → 2-class + TF → /obstacle_markers — 仅 use_obstacle=true
     adapter_node = Node(
         package='lidar3d_bringup', executable='obstacle_adapter',
         name='obstacle_adapter', output='screen',
@@ -94,10 +97,14 @@ def launch_setup(context, *args, **kwargs):
                 'passthrough': True,
             }
         ],
+        condition=IfCondition(use_obstacle),
     )
 
+    # road_analyzer：use_boundary=true 时把边界 remap 到 /road_boundary_markers
+    # (Frenet 用真实车道线)；use_boundary=false 时不 remap(发到 /lidar/...，
+    # Frenet 不订阅 → 由内部 ±half_width 兜底)。road_analyzer 始终启动。
     road_remappings = []
-    if LaunchConfiguration('perception_mode').perform(context) == 'lidar':
+    if use_boundary == 'true':
         road_remappings = [('/lidar/road_boundary_markers', '/road_boundary_markers')]
     road_node = Node(
         package='lidar3d_bringup', executable='road_analyzer',
@@ -140,9 +147,12 @@ def generate_launch_description():
             description='LiDAR sensor frame (matches SDF sensor parent frame)'),
         DeclareLaunchArgument('target_frame', default_value='base_link',
             description='Vehicle base_link frame for output markers'),
-        DeclareLaunchArgument('perception_mode', default_value='lidar',
-            description='Topic routing mode (kept for compatibility)'),
+        DeclareLaunchArgument('use_obstacle', default_value='true',
+            description='启用障碍物检测(发布 /obstacle_markers)。false 时 frenet_planner 不消费障碍消息'),
+        DeclareLaunchArgument('use_boundary', default_value='true',
+            description='启用真实车道线(road_analyzer → /road_boundary_markers)。'
+                        'false 时 Frenet 改用中心线 ±half_width 兜底走廊'),
         DeclareLaunchArgument('use_rviz', default_value='true',
-            description='Show 1 rviz2 window (2D surface obstacles)'),
+            description='Show 1 rviz2 window (2D surface obstacle view)'),
         OpaqueFunction(function=launch_setup),
     ])

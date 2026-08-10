@@ -18,9 +18,10 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -31,7 +32,8 @@ def generate_launch_description():
 
     csv_file = LaunchConfiguration("csv_file")
     use_rviz = LaunchConfiguration("use_rviz")
-    use_perception = LaunchConfiguration("use_perception")
+    use_boundary = LaunchConfiguration("use_boundary")
+    use_obstacle = LaunchConfiguration("use_obstacle")
 
     # Common remaps: real-car hardware topics → simulation-standard names
     hw_remappings = [
@@ -44,8 +46,12 @@ def generate_launch_description():
         DeclareLaunchArgument("csv_file", default_value="recorded_path.csv",
                               description="Recorded CSV path file for Frenet centerline"),
         DeclareLaunchArgument("use_rviz", default_value="true"),
-        DeclareLaunchArgument("use_perception", default_value="true",
-                              description="Start LiDAR perception chain (lidar3d_bringup)"),
+        DeclareLaunchArgument("use_boundary", default_value="true",
+                              description="true: road_analyzer 发布真实车道线(/road_boundary_markers)。"
+                                          "false: Frenet 改用中心线 ±half_width 兜底走廊"),
+        DeclareLaunchArgument("use_obstacle", default_value="true",
+                              description="true: 启动障碍检测 → /obstacle_markers。"
+                                          "false: 关闭障碍检测, frenet_planner 不消费障碍消息"),
 
         # ── Hardware: CHCNAV combined navigation (GNSS + IMU on vcan2) ──
         Node(
@@ -72,16 +78,21 @@ def generate_launch_description():
             arguments=["-0.5", "0", "1.05", "0", "0", "0", "base_link", "laser_link"],
         ),
 
-        # ── Perception: LiDAR 3D perception (patchwork++ + clustering) ──
-        # Input point cloud remapped from /cx/lslidar_point_cloud
-        Node(
-            package="lidar3d_bringup",
-            executable="lidar_sim",
-            name="lidar3d_perception",
-            parameters=[{"use_sim_time": False}],
-            remappings=[("/lidar/points", "/cx/lslidar_point_cloud")],
-            condition=IfCondition(use_perception),
-            output="screen",
+        # ── Perception: LiDAR 3D perception (patchwork++ + road_analyzer + obstacle) ──
+        # cloud_topic 直接从实车 lslidar 驱动读取(/cx/lslidar_point_cloud)。
+        # use_boundary / use_obstacle 独立控制车道线与障碍。
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                str(Path(get_package_share_directory("lidar3d_bringup")) / "launch" / "lidar_sim.launch.py")),
+            launch_arguments={
+                "use_rviz": "false",
+                "cloud_topic": "/cx/lslidar_point_cloud",
+                "target_frame": "base_link",
+                "use_boundary": use_boundary,
+                "use_obstacle": use_obstacle,
+            }.items(),
+            condition=IfCondition(
+                PythonExpression(["'", use_boundary, "' == 'true' or '", use_obstacle, "' == 'true'"])),
         ),
 
         # ── Path centerline from recorded CSV ──

@@ -8,6 +8,8 @@ USE_RVIZ=true
 USE_GZ_GUI=true
 USE_VIDEO=true
 FINISH_MODE="none"
+USE_BOUNDARY=true
+USE_OBSTACLE=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --seed) SEED="$2"; shift 2 ;;
@@ -16,6 +18,8 @@ while [[ $# -gt 0 ]]; do
     --no-rviz) USE_RVIZ=false; shift ;;
     --headless-gazebo) USE_GZ_GUI=false; shift ;;
     --no-video) USE_VIDEO=false; shift ;;
+    --no-boundary) USE_BOUNDARY=false; shift ;;
+    --no-obstacle) USE_OBSTACLE=false; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -62,6 +66,8 @@ if [[ "$FINISH_MODE" == "line" ]]; then
     use_rviz:="$USE_RVIZ" \
     use_gz_gui:="$USE_GZ_GUI" \
     use_video:="$USE_VIDEO" \
+    use_boundary:="$USE_BOUNDARY" \
+    use_obstacle:="$USE_OBSTACLE" \
     video_path:="$VIDEO_PATH"
 else
   GENERATED="$SCRIPT_DIR/runtime/scenario_$SEED"
@@ -84,6 +90,8 @@ else
     use_rviz:="$USE_RVIZ" \
     use_gz_gui:="$USE_GZ_GUI" \
     use_video:="$USE_VIDEO" \
+    use_boundary:="$USE_BOUNDARY" \
+    use_obstacle:="$USE_OBSTACLE" \
     video_path:="$VIDEO_PATH"
 fi
 

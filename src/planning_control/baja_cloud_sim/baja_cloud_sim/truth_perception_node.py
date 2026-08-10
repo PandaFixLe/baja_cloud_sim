@@ -15,13 +15,10 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 from std_msgs.msg import Float32
 from tf2_ros import TransformBroadcaster
-from visualization_msgs.msg import Marker, MarkerArray
-from geometry_msgs.msg import Point
 
 from .core import (
     quaternion_to_rpy,
     rpy_to_quaternion,
-    world_to_base,
     wrap_angle,
     yaw_to_quaternion,
 )
@@ -40,13 +37,6 @@ class TruthPerceptionNode(Node):
         # On the real car this node is replaced by a real localization node, so
         # this parameter is only relevant in simulation.
         self.declare_parameter("ground_truth_odom_topic", "/ground_truth/odom")
-        # When true, publish scenario ground-truth road boundaries on
-        # /road_boundary_markers as a fallback.  Defaults to false so the
-        # perception group's road_analyzer (lidar3d_bringup) remains the sole
-        # publisher of /road_boundary_markers — two publishers on the same topic
-        # would create a conflicting / flickering corridor for the planner.
-        # Enable only for debugging when the LiDAR lane-edge detection is down.
-        self.declare_parameter("publish_ground_truth_boundary", False)
         scenario_file = self.get_parameter("scenario_file").get_parameter_value().string_value
         if not scenario_file:
             raise RuntimeError("scenario_file parameter is required")
@@ -71,7 +61,6 @@ class TruthPerceptionNode(Node):
         self.yaw_pub = self.create_publisher(Float32, "/imu/yaw", 10)
         self.localization_pub = self.create_publisher(Odometry, "/localization/odom", 10)
         self.centerline_pub = self.create_publisher(PathMessage, "/reference_centerline", latched)
-        self.boundary_pub = self.create_publisher(MarkerArray, "/road_boundary_markers", 10)
         self.create_subscription(Odometry, self.get_parameter("ground_truth_odom_topic").value, self._odom_callback, 20)
         self.create_timer(0.05, self._publish_truth)
         self.create_timer(1.0, self._publish_centerline)
@@ -112,25 +101,6 @@ class TruthPerceptionNode(Node):
             pose.pose.orientation.w = qw
             message.poses.append(pose)
         self.centerline_pub.publish(message)
-
-    def _boundary_marker(self, points, namespace: str, marker_id: int, color) -> Marker:
-        marker = Marker()
-        marker.header.frame_id = "base_link"
-        marker.header.stamp = self.get_clock().now().to_msg()
-        marker.ns = namespace
-        marker.id = marker_id
-        marker.type = Marker.LINE_STRIP
-        marker.action = Marker.ADD
-        marker.pose.orientation.w = 1.0
-        marker.scale.x = 0.09
-        marker.color.r, marker.color.g, marker.color.b, marker.color.a = color
-        marker.lifetime.nanosec = 180_000_000
-        for item in points:
-            local = world_to_base((item["x"], item["y"]), (self.pose.x, self.pose.y), self.yaw)
-            if -self.backward <= local[0] <= self.forward and abs(local[1]) <= 12.0:
-                point = Point(x=local[0], y=local[1], z=0.08)
-                marker.points.append(point)
-        return marker
 
     def _publish_truth(self) -> None:
         if self.pose is None or self.odom is None:
@@ -207,29 +177,16 @@ class TruthPerceptionNode(Node):
         # sparse LiDAR.  In lidar_sim.launch.py, road_analyzer's boundary topic
         # is NOT remapped here (perception_mode defaults to 'truth' in
         # simulation.launch.py), so there is no conflict.
-        # Ground-truth road boundaries (from scenario file).  Normally NOT
-        # published here: the perception group's road_analyzer is the single
-        # authoritative publisher of /road_boundary_markers in lidar mode.
-        # Only publish when publish_ground_truth_boundary is enabled (debug
-        # fallback for when the LiDAR lane-edge detection is unavailable).
-        if self.get_parameter("publish_ground_truth_boundary").value:
-            boundary_array = MarkerArray()
-            boundary_array.markers.append(
-                self._boundary_marker(self.scenario["left_boundary"], "road_left", 0, (0.10, 0.85, 1.0, 1.0))
-            )
-            boundary_array.markers.append(
-                self._boundary_marker(self.scenario["right_boundary"], "road_right", 1, (0.10, 0.85, 1.0, 1.0))
-            )
-            self.boundary_pub.publish(boundary_array)
-
         # NOTE: obstacles (and edge tires) are NOT published on /obstacle_markers
         # from here. The perception group's own Gazebo-mounted radar detects the
         # physical obstacle boxes and tires directly, so no ROS ground-truth for
         # obstacles is injected by this node.
-        # NOTE: /road_boundary_markers is also NO LONGER published here -- it is
-        # now produced by the perception group's road_analyzer node (lidar3d_bringup)
-        # via lidar_sim.launch.py, remapped to /road_boundary_markers. This node
-        # only provides localization / GPS / IMU / centerline / TF now.
+        # NOTE: /road_boundary_markers is NOT published here.  The Frenet planner
+        # derives its corridor from the perception group's road_analyzer
+        # (lidar3d_bringup) when use_boundary=true, or falls back to a
+        # centerline +/- half_width corridor (internally, in frenet_planner_node)
+        # when use_boundary=false.  This node only provides localization / GPS /
+        # IMU / centerline / TF now.
 
 
 def main(args=None) -> None:

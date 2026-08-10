@@ -20,6 +20,12 @@ frenet_planner_node:
     desired_clearance: 1.2
     vehicle_length: 3.0
     vehicle_width: 1.5
+    # 实车无 scenario 真值边界；use_boundary=false 或车道线缺失时，
+    # Frenet 用中心线(CSV航点)自带 half_width，fallback default_half_width 生成保底走廊。
+    default_half_width: 4.0
+    min_half_width: 1.5
+    # 实车障碍检测开关；false 时不消费 /obstacle_markers(纯跟踪)。等同 launch use_obstacle。
+    use_obstacle: true
     min_obstacle_range: 0.5
 
 path_follower_node:
