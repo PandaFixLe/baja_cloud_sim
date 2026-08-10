@@ -1,0 +1,116 @@
+# ── Real-car parameters (no use_sim_time, no Gazebo-specific config) ──
+# Used by real_car.launch.py and real_car_remote.launch.py.
+# GPS origin is auto-set by csv_to_centerline_node from the CSV first point;
+# launch files override origin_latitude/longitude for all nodes consistently.
+
+csv_to_centerline_node:
+  ros__parameters:
+    csv_file: "recorded_path.csv"
+    auto_origin: true
+    publish_rate: 1.0
+    frame_id: "map"
+
+frenet_planner_node:
+  ros__parameters:
+    origin_latitude: 0.0
+    origin_longitude: 0.0
+    horizon_m: 30.0
+    center_weight: 1.0
+    clearance_weight: 12.0
+    desired_clearance: 1.2
+    vehicle_length: 3.0
+    vehicle_width: 1.5
+    min_obstacle_range: 0.5
+
+path_follower_node:
+  ros__parameters:
+    origin_latitude: 0.0
+    origin_longitude: 0.0
+    target_speed: 2.5
+    lookahead_distance: 3.0
+    kp_heading: 1.0
+    max_steering_angle: 26.0
+    use_speed_profile: true
+    desired_clearance: 3.5
+    min_speed_obstacle: 2.0
+    lqr_R: 3.0
+    lqr_v_norm: 1.5
+    lqr_Q: [0.05, 8.0, 2.0, 4.0, 0.5]
+    fb_speed_soften_alpha: 0.6
+    fb_speed_ref: 2.5
+    fb_speed_beta_min: 0.4
+    e_psi_ma_window: 5
+    lqr_max_steering: 0.4538
+    lqr_velocity_recompute_threshold: 1.0
+    dare_solve_interval: 50
+    max_steer_rate: 1.2
+    steer_lowpass_alpha: 0.5
+    state_lowpass_alpha: 0.45
+    cmd_steer_deadband_deg: 1.5
+    s_proj_lookahead: 0.8
+    max_lateral_accel: 0.8
+    curvature_lookahead_m: 3.0
+    pre_decel_lookahead_m: 8.0
+    pre_decel_max: 1.5
+    v_ref_lowpass_alpha: 0.75
+    terrain_slope_threshold: 0.06
+    terrain_min_speed: 1.0
+    use_terrain_profile: false
+    enable_lqr: true
+    obstacle_classes:
+      tall:
+        lateral_avoid: true
+        desired_clearance: 1.5
+        min_speed: 1.5
+      flat_ground:
+        lateral_avoid: false
+        approach_distance: 5.0
+        slow_speed: 2.0
+        default_half_width: 0.9
+    min_obstacle_range: 0.5
+    lon_kp: 2.0
+    lon_ki: 0.5
+    lon_kd: 0.2
+    lon_i_limit: 2.0
+    idle_speed: 1.0
+    slope_comp_gain: 1.0
+    speed_tier: "normal"
+    tier_slow_speed: 2.5
+    tier_normal_speed: 4.0
+    tier_fast_speed: 4.5
+    speed_profile_max: 4.0
+    lon_accel_step: 0.20
+    lon_decel_step: 0.25
+    finish_mode: "none"
+    finish_runout_m: 20.0
+    finish_decel: 1.5
+    finish_s: -1.0
+    finish_target_lap: 1
+    finish_time_limit_s: 1200.0
+    finish_max_duration_s: 600.0
+
+evaluator_node:
+  ros__parameters:
+    use_scenario: false
+    results_dir: "results_real"
+    vehicle_length: 3.0
+    vehicle_width: 1.5
+    vehicle_status_topic: "/vehicle_status"
+
+remote_control_node:
+  ros__parameters:
+    listen_address: "0.0.0.0"
+    listen_port: 5005
+    max_speed: 5.0
+    max_steering_angle_deg: 26.0
+    steering_input_in_degrees: false
+
+can_bridge_node:
+  ros__parameters:
+    vcu_can_channel: "vcan1"
+    can_bustype: "socketcan"
+    control_period_ms: 20
+    target_mode: 1
+    cmd_topic: "/cmd_control"
+    vcu_dbc_file: "autonomous.dbc"
+    steering_ratio: 12.0

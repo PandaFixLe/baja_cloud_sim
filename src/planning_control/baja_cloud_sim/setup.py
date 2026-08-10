@@ -40,10 +40,13 @@ setup(
             "mock_perception = baja_cloud_sim.mock_perception_node:main",
             "frenet_planner = baja_cloud_sim.frenet_planner_node:main",
             "path_follower = baja_cloud_sim.path_follower_node:main",
+            "remote_control = baja_cloud_sim.remote_control_node:main",
             "actuator_adapter = baja_cloud_sim.actuator_adapter_node:main",
             "evaluator = baja_cloud_sim.evaluator_node:main",
             "video_recorder = baja_cloud_sim.video_recorder_node:main",
             "gz_pcl_bridge = baja_cloud_sim.gz_pcl_bridge:main",
+            "csv_to_centerline = baja_cloud_sim.csv_to_centerline_node:main",
+            "path_recorder = baja_cloud_sim.path_recorder_node:main",
         ],
     },
 )

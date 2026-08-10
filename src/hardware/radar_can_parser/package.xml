@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>radar_can_parser</name>
+  <version>1.0.0</version>
+  <description>无Qt纯C++ ROS2节点，从can0接收毫米波雷达报文，解析点云和目标并发布</description>
+  <maintainer email="user@example.com">User</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>pcl_conversions</depend>
+  <depend>pcl_ros</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

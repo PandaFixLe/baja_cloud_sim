@@ -134,3 +134,12 @@ actuator_adapter_node:
 evaluator_node:
   ros__parameters:
     use_sim_time: true
+
+remote_control_node:
+  ros__parameters:
+    use_sim_time: true
+    listen_address: "127.0.0.1"
+    listen_port: 5005
+    max_speed: 10.0
+    max_steering_angle_deg: 35.0
+    steering_input_in_degrees: false

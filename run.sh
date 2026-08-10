@@ -38,27 +38,54 @@ fi
 
 export GZ_PARTITION="baja_${USER//[^a-zA-Z0-9_]/_}_$SEED"
 export GZ_SIM_RESOURCE_PATH="$SCRIPT_DIR/install/baja_cloud_sim/share/baja_cloud_sim:${GZ_SIM_RESOURCE_PATH:-}"
-GENERATED="$SCRIPT_DIR/runtime/scenario_$SEED"
-RESULTS="$SCRIPT_DIR/results/seed_$SEED"
-mkdir -p "$GENERATED" "$RESULTS"
-RUN_TAG="$(date +%Y%m%d_%H%M%S)"
-VIDEO_PATH="$RESULTS/gazebo_${RUN_TAG}.mp4"
 
-if [[ "$USE_VIDEO" == "true" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "Video recording requires ffmpeg. Install it with: sudo apt-get install -y ffmpeg" >&2
-  exit 1
+# finish_mode=line 使用直线赛道（100m 土路 + 20m 停止区），
+# 其余模式使用闭环赛道。
+if [[ "$FINISH_MODE" == "line" ]]; then
+  GENERATED="$SCRIPT_DIR/runtime/scenario_line_$SEED"
+  RESULTS="$SCRIPT_DIR/results/line_seed_$SEED"
+  mkdir -p "$GENERATED" "$RESULTS"
+  RUN_TAG="$(date +%Y%m%d_%H%M%S)"
+  VIDEO_PATH="$RESULTS/gazebo_${RUN_TAG}.mp4"
+
+  if [[ "$USE_VIDEO" == "true" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "Video recording requires ffmpeg. Install it with: sudo apt-get install -y ffmpeg" >&2
+    exit 1
+  fi
+
+  ros2 run baja_cloud_sim generate_scenario --output "$GENERATED" --seed "$SEED" --obstacles "$OBSTACLES" --runout_m 20
+  ros2 launch baja_cloud_sim simulation.launch.py \
+    world_file:="$GENERATED/baja_100m.sdf" \
+    scenario_file:="$GENERATED/scenario.json" \
+    results_dir:="$RESULTS" \
+    finish_mode:="$FINISH_MODE" \
+    use_rviz:="$USE_RVIZ" \
+    use_gz_gui:="$USE_GZ_GUI" \
+    use_video:="$USE_VIDEO" \
+    video_path:="$VIDEO_PATH"
+else
+  GENERATED="$SCRIPT_DIR/runtime/scenario_$SEED"
+  RESULTS="$SCRIPT_DIR/results/seed_$SEED"
+  mkdir -p "$GENERATED" "$RESULTS"
+  RUN_TAG="$(date +%Y%m%d_%H%M%S)"
+  VIDEO_PATH="$RESULTS/gazebo_${RUN_TAG}.mp4"
+
+  if [[ "$USE_VIDEO" == "true" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "Video recording requires ffmpeg. Install it with: sudo apt-get install -y ffmpeg" >&2
+    exit 1
+  fi
+
+  ros2 run baja_cloud_sim generate_loop_scenario --output "$GENERATED" --seed "$SEED" --obstacles "$OBSTACLES"
+  ros2 launch baja_cloud_sim simulation.launch.py \
+    world_file:="$GENERATED/baja_loop.sdf" \
+    scenario_file:="$GENERATED/loop_scenario.json" \
+    results_dir:="$RESULTS" \
+    finish_mode:="$FINISH_MODE" \
+    use_rviz:="$USE_RVIZ" \
+    use_gz_gui:="$USE_GZ_GUI" \
+    use_video:="$USE_VIDEO" \
+    video_path:="$VIDEO_PATH"
 fi
-
-ros2 run baja_cloud_sim generate_loop_scenario --output "$GENERATED" --seed "$SEED" --obstacles "$OBSTACLES"
-ros2 launch baja_cloud_sim simulation.launch.py \
-  world_file:="$GENERATED/baja_loop.sdf" \
-  scenario_file:="$GENERATED/loop_scenario.json" \
-  results_dir:="$RESULTS" \
-  finish_mode:="$FINISH_MODE" \
-  use_rviz:="$USE_RVIZ" \
-  use_gz_gui:="$USE_GZ_GUI" \
-  use_video:="$USE_VIDEO" \
-  video_path:="$VIDEO_PATH"
 
 # Auto-generate plots after run
 LATEST_CSV=$(ls -t "$RESULTS"/tracking_*.csv 2>/dev/null | head -1)

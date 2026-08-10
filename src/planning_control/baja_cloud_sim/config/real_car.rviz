@@ -1,0 +1,77 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 0
+    Name: Displays
+    Panel Height: 0
+    Property Tree Widget:
+      Expanded: ~
+      Splitter Ratio: 0.5
+    Tree Height: 500
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 50
+    - Class: rviz_default_plugins/Path
+      Name: Reference Centerline
+      Topic:
+        Value: /reference_centerline
+      Color: 255; 255; 0
+    - Class: rviz_default_plugins/Path
+      Name: Planned Path
+      Topic:
+        Value: /planned_path
+      Color: 0; 255; 0
+    - Class: rviz_default_plugins/Path
+      Name: Actual Path
+      Topic:
+        Value: /actual_path
+      Color: 0; 128; 255
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Obstacles
+      Topic:
+        Value: /obstacle_markers
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Road Boundary
+      Topic:
+        Value: /road_boundary_markers
+    - Class: rviz_default_plugins/PointStamped
+      Name: Lookahead Point
+      Topic:
+        Value: /lookahead_point
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Planning Debug
+      Topic:
+        Value: /planning_debug
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Metrics
+      Topic:
+        Value: /simulation/metrics
+    - Class: rviz_default_plugins/PointCloud2
+      Name: LiDAR PointCloud
+      Topic:
+        Value: /cx/lslidar_point_cloud
+      Size (m): 0.05
+  Global Options:
+    Fixed Frame: map
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Distance: 80
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      X: 0
+      Y: 0
+      Angle: 0
+      Scale: 10
+Window Geometry:
+  Height: 800
+  Width: 1200
+  X: 50
+  Y: 50

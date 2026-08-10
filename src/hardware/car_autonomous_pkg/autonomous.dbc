@@ -1,0 +1,180 @@
+VERSION ""
+
+
+NS_ : 
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_:
+VAL_TABLE_ TurnLight 3 "Double Flash" 2 "Turn Right" 1 "Turn Left" 0 "Not Control" ;
+VAL_TABLE_ Batt_Warning 3 "Reserved" 2 "Almost Exhausted" 1 "Low Power" 0 "Healthy" ;
+VAL_TABLE_ Gear_Value 2 "R" 1 "D" 0 "N" ;
+
+
+BO_ 3221225472 VECTOR__INDEPENDENT_SIG_MSG: 0 Vector__XXX
+ SG_ IPC_TurnLight : 0|2@0+ (1,0) [0|3] "" Vector__XXX
+
+BO_ 180 VCU_Info4: 8 Vector__XXX
+ SG_ Motor_Rpm : 23|16@0+ (1,-30000) [-30000|30000] "rpm" Vector__XXX
+ SG_ Current_Speed : 7|16@0+ (0.01,0) [0|100] "m/s" Vector__XXX
+
+BO_ 179 VCU_Info3: 8 Vector__XXX
+ SG_ Error_BMS_Level : 7|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ Error_Motor_Level : 1|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ Error_Level : 9|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ Error_EPS_Level : 3|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ Error_EHB_Level : 5|2@0+ (1,0) [0|3] "" Vector__XXX
+
+BO_ 178 VCU_Info2: 8 Vector__XXX
+ SG_ VCU_Ready : 35|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ Start_KEY : 18|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Relay_Horn : 28|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Relay_Buzzer : 29|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Relay_BackupLight : 30|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Emergency_Status : 33|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ Relay_LampY : 24|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Relay_LampB : 25|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Relay_LampG : 26|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Button_Emergency : 17|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Relay_LampR : 27|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Remote_Emergency : 16|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ BMS_ChargeSts : 9|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ SOC : 7|8@0+ (0.4,0) [0|100] "%" Vector__XXX
+
+BO_ 177 VCU_Info1: 8 Vector__XXX
+ SG_ Motor_Onlife_Sts : 61|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ SES_Onlife_Sts : 60|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ EHB_Onlife_Sts : 59|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ BMS_Onlife_Sts : 58|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Motor_DirSts : 51|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Current_Gear : 49|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ Current_BrkPress : 15|8@0+ (0.1,0) [0|25] "Mpa" Vector__XXX
+ SG_ VCU_Life_Signal : 7|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ IPC_Onlife_Sts : 57|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ RC_Online_Sts : 56|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ VCU_Mode : 3|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ Motor_Torque : 39|11@0+ (1,-1000) [-1000|1000] "Nm" Vector__XXX
+ SG_ Current_Speed : 44|9@0+ (0.1,0) [0|50] "m/s" Vector__XXX
+ SG_ Motor_En_Sts : 50|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ Current_Angle : 23|16@0+ (0.1,-700) [-700|700] "deg" Vector__XXX
+
+BO_ 161 IPC_CMD: 8 Vector__XXX
+ SG_ IPC_Exit_Mode3 : 2|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ IPC_Motor_Mode : 48|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ IPC_Target_Torque : 39|11@0+ (0.1,0) [0|200] "Nm" Vector__XXX
+ SG_ IPC_BrkPress : 15|8@0+ (0.05,0) [0|12] "Mpa" Vector__XXX
+ SG_ IPC_Target_Steering_En : 23|1@0+ (1,0) [0|1] "" Vector__XXX
+ SG_ IPC_Target_Speed : 44|9@0+ (0.1,0) [0|50] "m/s" Vector__XXX
+ SG_ IPC_Target_Mode : 1|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ IPC_Target_Gear : 51|2@0+ (1,0) [0|3] "" Vector__XXX
+ SG_ IPC_Target_Angle : 22|15@0+ (0.1,-700) [-700|700] "deg" Vector__XXX
+ SG_ IPC_Life_Signal : 7|4@0+ (1,0) [0|15] "" Vector__XXX
+ SG_ IPC_Motor_En : 49|1@0+ (1,0) [0|1] "" Vector__XXX
+
+
+
+CM_ BO_ 3221225472 "This is a message for not used signals, created by Vector CANdb++ DBC OLE DB Provider.";
+CM_ SG_ 3221225472 IPC_TurnLight "上位机转向灯控制";
+CM_ SG_ 180 Motor_Rpm "电机实际转速";
+CM_ SG_ 180 Current_Speed "当前车速，根据驱动电机转速计算而得";
+CM_ BO_ 179 "故障报文输出";
+CM_ SG_ 179 Error_BMS_Level "0-无故障,1-一级故障,2-二级故障,3-三级故障";
+CM_ SG_ 179 Error_Motor_Level "0-无故障,1-一级故障,2-二级故障,3-三级故障";
+CM_ SG_ 179 Error_Level "0-无故障,1-一级故障,2-二级故障,3-三级故障";
+CM_ SG_ 179 Error_EPS_Level "0-无故障,1-一级故障,2-二级故障,3-三级故障";
+CM_ SG_ 179 Error_EHB_Level "0-无故障,1-一级故障,2-二级故障,3-三级故障";
+CM_ SG_ 178 VCU_Ready "0 无，  1 OK";
+CM_ SG_ 178 Start_KEY "0-Off 1-On";
+CM_ SG_ 178 Relay_Horn "0-Off 1-On";
+CM_ SG_ 178 Relay_Buzzer "0-Off 1-On";
+CM_ SG_ 178 Relay_BackupLight "0-Off 1-On";
+CM_ SG_ 178 Emergency_Status "0 无急停，  1 急停中";
+CM_ SG_ 178 Relay_LampY "0-Off 1-On";
+CM_ SG_ 178 Relay_LampB "0-Off 1-On";
+CM_ SG_ 178 Relay_LampG "0-Off 1-On";
+CM_ SG_ 178 Button_Emergency "0-Off 1-On";
+CM_ SG_ 178 Relay_LampR "0-Off 1-On";
+CM_ SG_ 178 Remote_Emergency "0-Off 1-On";
+CM_ SG_ 178 BMS_ChargeSts "0-未充电,1-正在充电,2-充电完成,3-信号无效";
+CM_ SG_ 177 Motor_Onlife_Sts "0-Offline,1-Online";
+CM_ SG_ 177 SES_Onlife_Sts "0-Offline,1-Online";
+CM_ SG_ 177 EHB_Onlife_Sts "0-Offline,1-Online";
+CM_ SG_ 177 BMS_Onlife_Sts "0-Offline,1-Online";
+CM_ SG_ 177 Motor_DirSts "0-Forward，1-Reverse";
+CM_ SG_ 177 Current_BrkPress "当前制动压力";
+CM_ SG_ 177 VCU_Life_Signal "VCU生命信号";
+CM_ SG_ 177 IPC_Onlife_Sts "0-Offline,1-Online";
+CM_ SG_ 177 RC_Online_Sts "0-Offline,1-Online";
+CM_ SG_ 177 VCU_Mode "0-预备模式 1-自主模式 2-视驾模式 3-紧急模式 4-遥控模式";
+CM_ SG_ 177 Motor_Torque "驱动电机输出转矩量";
+CM_ SG_ 177 Current_Speed "当前车速，根据驱动电机转速计算而得";
+CM_ SG_ 177 Motor_En_Sts "0-Not En,1-En";
+CM_ SG_ 177 Current_Angle "当前转向角度";
+CM_ BO_ 161 "上位机接口";
+CM_ SG_ 161 IPC_Exit_Mode3 "0-Invalid,1-Valid(退出紧急模式)";
+CM_ SG_ 161 IPC_Motor_Mode "0-扭矩模式，1-转速模式";
+CM_ SG_ 161 IPC_Target_Torque "上位机目标扭矩";
+CM_ SG_ 161 IPC_BrkPress "上位机制动压力信号";
+CM_ SG_ 161 IPC_Target_Steering_En "上位机转向使能信号";
+CM_ SG_ 161 IPC_Target_Speed "上位机车速信号";
+CM_ SG_ 161 IPC_Target_Mode "上位机模式信号：0-无效 1-自主模式 2-视驾模式 3-紧急模式";
+CM_ SG_ 161 IPC_Target_Gear "0-N,1-D,2-R";
+CM_ SG_ 161 IPC_Target_Angle "上位机转角信号";
+CM_ SG_ 161 IPC_Life_Signal "上位机生命信号";
+CM_ SG_ 161 IPC_Motor_En "1-En,0-Not En
+驱动电机使能";
+BA_DEF_  "DBName" STRING ;
+BA_DEF_  "BusType" STRING ;
+BA_DEF_ BO_  "VFrameFormat" ENUM  "StandardCAN","ExtendedCAN","reserved","J1939PG","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","reserved","StandardCAN_FD","ExtendedCAN_FD";
+BA_DEF_ BO_  "GenMsgSendType" ENUM  "Cyclic","Event","CyclicIfActive","SpontanWithDelay","CyclicAndSpontan","CyclicAndSpontanWithDelay";
+BA_DEF_ BO_  "GenMsgCycleTime" INT 0 0;
+BA_DEF_ BO_  "GenMsgDelayTime" INT 0 0;
+BA_DEF_ SG_  "GenSigStartValue" FLOAT 0 0;
+BA_DEF_DEF_  "DBName" "Cluster";
+BA_DEF_DEF_  "BusType" "CAN";
+BA_DEF_DEF_  "VFrameFormat" "StandardCAN";
+BA_DEF_DEF_  "GenMsgSendType" "Cyclic";
+BA_DEF_DEF_  "GenMsgCycleTime" 0;
+BA_DEF_DEF_  "GenMsgDelayTime" 0;
+BA_DEF_DEF_  "GenSigStartValue" 0;
+BA_ "DBName" "IPC_VCU";
+BA_ "GenMsgCycleTime" BO_ 180 20;
+BA_ "GenMsgCycleTime" BO_ 179 100;
+BA_ "GenMsgCycleTime" BO_ 178 100;
+BA_ "GenMsgCycleTime" BO_ 177 20;
+BA_ "GenMsgCycleTime" BO_ 161 20;
+BA_ "GenSigStartValue" SG_ 180 Motor_Rpm 30000;
+BA_ "GenSigStartValue" SG_ 177 Motor_Torque 1000;
+BA_ "GenSigStartValue" SG_ 177 Current_Angle 7000;
+BA_ "GenSigStartValue" SG_ 161 IPC_Target_Angle 7000;
+VAL_ 3221225472 IPC_TurnLight 3 "Double Flash" 2 "Turn Right" 1 "Turn Left" 0 "Not Control" ;
+VAL_ 177 Current_Gear 2 "R" 1 "D" 0 "N" ;
+

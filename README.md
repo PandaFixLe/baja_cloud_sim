@@ -3,17 +3,18 @@
 面向 **Ubuntu 22.04 + ROS 2 Humble + Gazebo Harmonic** 的自动驾驶赛车规划-控制闭环仿真工程。
 以 BAJA SAE 方程式越野车为对象，覆盖「场景生成 → 感知模拟 → Frenet 局部规划 → 横纵向控制 → 执行器 → 指标评价」全链路。
 
-当前分支 **`v2.4`**：横向为 Apollo 式 **LQR + 前馈**主控（含速度自适应反馈软化），
+当前分支 **`v2.6`**：横向为 Apollo 式 **LQR + 前馈**主控（含速度自适应反馈软化），
 纵向为**实车开环**（仅发期望速度设定值，速度闭环交由电机控制器执行；仿真期保留
 idle 怠速保底）。在 294 m 闭环赛道上可稳定跑完整圈，平均中心线偏差 **0.08 m**，
 转向饱和率 **0%**，弯道无蛇形振荡、直道稳态高频抖动被有效抑制。
 
-> 本分支在 v2.2 实车对接准备的基础上，**新增 EPS（电动助力转向）执行器模型**以验证
-> LQR 在真实齿条约束（15°/s 转速上限 + 1° 死区）下的表现，并补齐一系列控制优化：
-> 速度自适应反馈软化（`beta(v)`）、双向曲率前瞻速度剖面、三档速度分级、面向实车
-> 移植的转向抖动治理（e_psi 移动平均 + 指令端绝对死区 + EPS 输出绝对死区）。EPS 仅
-> 存在于 **仿真层** `actuator_adapter_node`，实车层用不同 launch 文件替换该节点即可去除，
-> 不重复建模。
+> 本分支完成**仿真层与实车层的融合**：规划-控制-感知核心（你的 `baja_cloud_sim`）不动，
+> 供应商硬件驱动包（华测组合导航 `chcnav`、镭神激光雷达 `lslidar`、毫米波雷达
+> `radar_can_parser`、超声波雷达 `ultrasonic_radar_driver`、自定义消息 `msg_interfaces`、
+> 以及仅保留 CAN 桥接的 `car_autonomous_pkg`）整体搬入 `src/hardware/`。实车与仿真通过
+> **launch 话题 remap** 对齐（如 `/chcnav/devpvt → /gps/fix`），核心节点代码零改动。
+> 实车运行入口为 `run_real.sh`（自主）/ `run_real_remote.sh`（视驾）/ `run_record.sh`（录制路径）。
+> 供应商原 `ros2_ws/` 已删除。
 
 ---
 
@@ -30,6 +31,7 @@ idle 怠速保底）。在 294 m 闭环赛道上可稳定跑完整圈，平均�
 - [测试](#测试)
 - [输出产物](#输出产物)
 - [已知问题](#已知问题)
+- [实车层运行（融合）](#实车层运行融合)
 - [版本历史](#版本历史)
 
 ---
@@ -81,7 +83,7 @@ sudo apt-get install -y ffmpeg
 
 ```bash
 ./run.sh --seed 42 --obstacles 5 --finish-mode circle   # 闭环赛道 + 终点减速停车
-./run_line.sh --seed 42 --obstacles 5 --finish-mode line # 直线开放赛道 + 终点减速停车
+./run.sh --seed 42 --obstacles 5 --finish-mode line     # 直线开放赛道 + 终点减速停车
 ./run.sh --seed 0  --obstacles 0                         # 空赛道，纯跟踪性能测试（无终点逻辑）
 ```
 
@@ -95,9 +97,9 @@ sudo apt-get install -y ffmpeg
 | `--no-video` | 关闭录像（调试时加速） |
 
 > **两种场景脚本**：
-> - `run.sh` 始终加载**闭环赛道**（`baja_loop.sdf`），无论 `--finish-mode` 传什么场景都是圈；
-> - `run_line.sh` 加载**直线开放赛道**（`baja_line.sdf`），需配合 `--finish-mode line`。
-> 二者不能混用——`run.sh --finish-mode line` 跑的仍是圈道，只是按直线终点逻辑处理。
+> - `run.sh` 默认加载**闭环赛道**（`baja_loop.sdf`）；
+> - 传 `--finish-mode line` 时自动切换为**直线开放赛道**（`baja_100m.sdf` + 20 m 停止区），
+>   行为与旧 `run_line.sh` 一致（该脚本已并入 `run.sh`，不再单独存在）。
 
 **终点逻辑（`finish_mode`）**：
 - `line`：在赛道末端前 `finish_runout_m`（默认 20 m）处画红色终点线，过线后按匀减速 profile 在停车区停住；
@@ -141,6 +143,78 @@ RViz 中会以红色半透明 `LINE_STRIP` 显示终点线（`/finish_line_marke
 > launch 会在 `use_perception=false` 时自动把 `truth_perception.publish_ground_truth_boundary`
 > 设为 `true`（感知开启时自动为 `false`，避免与 `road_analyzer` 在 `/road_boundary_markers`
 > 上双发布冲突）。
+
+---
+
+## 实车层运行（融合）
+
+v2.6 起仿真层与实车层已融合到同一工作空间。规划-控制-感知核心（`baja_cloud_sim` / `perception`）
+在仿真与实车间**代码零改动**，仅通过 launch 的**话题 remap** 把实车硬件话题映射到仿真标准
+话题名（见[系统架构](#系统架构)的实车边界）。实车软件包位于 `src/hardware/`，由 `run_real*.sh`
+脚本启动。
+
+### 运行入口
+
+| 脚本 | 模式 | 说明 |
+|------|------|------|
+| `run.sh` | 仿真自主 | Gazebo 闭环/直线 + 全链路 |
+| `run_remote.sh` | 仿真视驾 | 仿真下用 `remote_control_node` 接管 `/cmd_control` |
+| `run_real.sh` | **实车自主** | 硬件定位+感知 → Frenet → 路径跟踪 → CAN 桥接 → VCU |
+| `run_real_remote.sh` | **实车视驾** | 硬件定位+感知 → `remote_control_node` → CAN 桥接 → VCU |
+| `run_record.sh` | **实车路径录制** | 仅定位 + 录制节点，遥控走一圈生成 CSV 航点 |
+
+```bash
+# 实车自主（需先录制好最佳路径 CSV，再喂给 Frenet 在线规划）
+./run_real.sh --csv path/recorded_path.csv
+
+# 实车视驾（远程 UDP 手柄/键盘接管）
+./run_real_remote.sh
+
+# 实车路径录制（遥控开车，后台按 0.5 m 间距采 GPS 航点）
+./run_record.sh --output path/recorded_path.csv
+```
+
+> **比赛工作流**：比赛前一夜用 `run_record.sh` 遥控跑出最佳路线 → 生成 `recorded_path.csv`；
+> 比赛当日用 `run_real.sh --csv recorded_path.csv` 启动：`csv_to_centerline_node` 将 CSV 转为
+> `/reference_centerline` 喂给 `frenet_planner`，实时 GPS/IMU + 障碍驱动在线规划。
+> `run_record.sh` 仅启动定位与录制节点，车辆由你的手柄/遥控器独立驱动，二者互不冲突。
+
+### 接口对齐（remap 对照）
+
+| 核心节点订阅 | 仿真来源 | 实车来源（硬件包） | 对齐方式 |
+|------|------|------|------|
+| `/gps/fix`（NavSatFix） | `truth_perception` | `chcnav` → `/chcnav/devpvt` | launch remap |
+| `/imu/yaw`（Float32, 度） | `truth_perception` | `chcnav` → `/imu_yaw` | launch remap |
+| `/ground_truth/odom`（Odometry） | `truth_perception` | `chcnav` → `/chcnav/odom` | launch remap |
+| `/cmd_control`（AckermannDriveStamped） | `actuator_adapter` → Gazebo | `can_bridge_node` → VCU | **天然对齐**，不 remap |
+| `/obstacle_markers` / `/road_boundary_markers` | 感知组 | 感知组（同包，输入点云 remap 到 `/cx/lslidar_point_cloud`） | 话题一致 |
+
+实车参数文件：`src/planning_control/baja_cloud_sim/config/real_car_params.yaml`
+（无 `use_sim_time`、无 Gazebo 专用节点，含 `csv_to_centerline` / `frenet_planner` /
+`path_follower` / `evaluator(use_scenario=false)` / `remote_control` / `can_bridge` 参数）。
+
+### 实车 launch 清单
+
+`src/planning_control/baja_cloud_sim/launch/` 下新增：
+
+- `real_car.launch.py`：实车自主（chcnav + lslidar + 感知 + csv_to_centerline + frenet + path_follower + can_bridge + evaluator + rviz）
+- `real_car_remote.launch.py`：实车视驾（chcnav + lslidar + remote_control + can_bridge + evaluator + rviz）
+- `path_record.launch.py`：路径录制（chcnav + path_recorder）
+- `remote_simulation.launch.py`：仿真视驾（`remote_control` 替代 `path_follower`）
+
+### 硬件包（`src/hardware/`）
+
+| 包 | 角色 | 关键节点/文件 |
+|----|------|---------------|
+| `chcnav` | 华测组合导航 | `chcnav_full_node`（vcan2，发 `/chcnav/devpvt`+`/imu_yaw`+`/chcnav/odom`） |
+| `lslidar_ros2-master` | 镭神激光雷达 | `lslidar_driver`（发 `/cx/lslidar_point_cloud`，**编译需 `libpcap-dev`**） |
+| `radar_can_parser` | 毫米波雷达 | can0 解析 |
+| `ultrasonic_radar_driver` | 超声波雷达 | vcan3 |
+| `msg_interfaces` | 自定义消息 | — |
+| `car_autonomous_pkg` | **仅保留 CAN 桥接** | `can_bridge_node` + `can_manager` + `message_handler` + `vehicle_params` + `*.dbc`（规划控制节点已删除，由 `baja_cloud_sim` 替代） |
+
+> **注意**：供应商原 `ros2_ws/` 目录已删除，硬件包全部迁入 `src/hardware/`。
+> `lslidar_driver` 编译依赖 `libpcap-dev`，实车环境需 `sudo apt-get install -y libpcap-dev`。
 
 ---
 
@@ -202,6 +276,22 @@ Gazebo OdometryPublisher（世界真值位姿）
        │                     ├─ /imu/yaw
        │                     └─ /reference_centerline
        └─ evaluator ─────────── results/seed_N/tracking_*.csv
+
+──── 实车边界（v2.6 融合，同一算法核心，仅 remap 换源）────
+
+chcnav (vcan2)
+  ├─ /chcnav/devpvt   ──remap→  /gps/fix         (NavSatFix)
+  ├─ /imu_yaw         ──remap→  /imu/yaw         (Float32, 度)
+  └─ /chcnav/odom     ──remap→  /ground_truth/odom (Odometry)
+       │
+lslidar_driver (cx) ── /cx/lslidar_point_cloud ──remap→ 感知组输入点云
+       │
+   [ 算法核心层 frenet_planner / path_follower / evaluator 不变 ]
+       │
+       ▼ /cmd_control (AckermannDriveStamped)
+can_bridge_node (vcan1) ── VCU CAN  (★ 天然对齐，无需 remap)
+       │
+   [ 实车不再启动 truth_perception / actuator_adapter / video_recorder / gz_pcl_bridge ]
 
 感知组 LiDAR 管道（lidar3d_bringup + patchwork++ + lidar3d_perception_cpp，实车传感器在仿真中的部署）
   ├─ Gazebo gpu_lidar ── /lidar/points
@@ -651,8 +741,8 @@ obstacle_adapter     (lidar3d_bringup, Python, 订阅 /lidar/obstacle_markers)
 
 ### 启动方式（一键）
 
-感知管道已并入 `simulation.launch.py`，因此你原有的 `./run.sh`、`run_test.sh`、
-`run_line.sh`（circle/time 等模式）**一个命令即同时拉起规划-控制与感知**。
+感知管道已并入 `simulation.launch.py`，因此你原有的 `./run.sh`、`run_test.sh`
+（circle/time/line 等模式）**一个命令即同时拉起规划-控制与感知**。
 如需单独调试感知，也可在仿真运行后另开终端：
 
 ```bash
@@ -701,8 +791,23 @@ frenet_planner_node.py     10 Hz 规划，输出 /planned_path 与 /planner/stat
 path_follower_node.py      ★ 核心控制器（横向 LQR + 纵向 PID + 状态机）
 actuator_adapter_node.py   /cmd_control → /model/baja_vehicle/cmd_vel（仿真用）
                           ★ 内置 EPS 执行器模型（15°/s 转速上限 + 1° 死区，仿真层）
-evaluator_node.py          指标计算与 CSV 记录
+evaluator_node.py          指标计算与 CSV 记录（实车模式 use_scenario=false，从 /reference_centerline + /obstacle_markers 实时获取）
 video_recorder_node.py     ffmpeg 录制 Gazebo 相机
+remote_control_node.py     UDP 远程视驾控制（仿真/实车共用，发布 /cmd_control）
+csv_to_centerline_node.py  CSV 航点 → /reference_centerline（喂给 Frenet，实车赛前录制路径复用）
+path_recorder_node.py      实车路径录制（订阅 /gps/fix + /imu/yaw，按 0.5 m 采点写 CSV）
+```
+
+硬件层（`src/hardware/`，供应商驱动，实车用）：
+
+```text
+chcnav/                   华测组合导航（vcan2 → /chcnav/devpvt, /imu_yaw, /chcnav/odom）
+lslidar_ros2-master/      镭神激光雷达（→ /cx/lslidar_point_cloud，编译需 libpcap-dev）
+radar_can_parser/         毫米波雷达（can0）
+ultrasonic_radar_driver/  超声波雷达（vcan3）
+msg_interfaces/           自定义消息包
+car_autonomous_pkg/       ★ 仅保留 CAN 桥接：can_bridge_node + can_manager + message_handler + vehicle_params + *.dbc
+                          （原 path_follower/obstacle_avoider/path_recorder 等规划控制节点已删除，由 baja_cloud_sim 替代）
 ```
 
 > **实车移植角色**：`truth_perception_node` 与 `actuator_adapter_node` 是
@@ -908,6 +1013,7 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 | **`v2.3`** | **v2.3** | **LQR + 前馈 + β(v)** | **EPS 执行器模型 + 速度自适应反馈软化 + 双向曲率前瞻 + 三档速度分级** |
 | **`v2.4`** | **v2.4** | **LQR + 前馈 + 开环纵向** | **纵向改为实车开环(发期望速度设定值, 速度闭环交电机) + 感知开关(`use_perception` / `run_test.sh` 默认关感知) + 车道线真值自动切换** |
 | **`v2.5`** | **v2.5** | **LQR + 前馈 + 开环纵向** | **环境快照/恢复脚本 + 测试缓存清理(`.pytest_cache`/`.claude` 入 ignore) + 安装/运行脚本与文档同步** |
+| **`v2.6`** | **v2.6** | **LQR + 前馈 + 开环纵向** | **仿真层与实车层融合：`src/hardware/` 迁入供应商硬件驱动（chcnav/lslidar/radar/ultrasonic/msg_interfaces/car_autonomous_pkg 仅留 CAN 桥接）；核心节点零改动 + launch remap 对齐；新增实车 launch 与 `run_real*.sh`/`run_record.sh`；`csv_to_centerline`/`path_recorder` 节点；`evaluator` 支持 `use_scenario=false` 实车模式；删除 `ros2_ws/` 与 `run_line.sh`** |
 
 ### v2.1 相对 v2 的变更
 
@@ -1127,6 +1233,48 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 
 > 说明：v2.5 相对 v2.4 **改动了一部分控制/规划行为**（上述第 6 条的弯道稳定性增量），
 > 但**未改动**算法核心结构（横向 LQR + 前馈、纵向实车开环、EPS 仿真层模型）与感知开关逻辑本身。
+
+### v2.6 相对 v2.5 的变更
+
+面向**仿真层与实车层融合到同一工作空间**，规划-控制-感知核心（`baja_cloud_sim` /
+`perception`）零改动，仅通过 launch 话题 remap 对接实车硬件：
+
+1. **供应商硬件包迁入 `src/hardware/`**——从原 `ros2_ws/src/` 整体搬入：
+   - `chcnav`（华测组合导航，vcan2 发 `/chcnav/devpvt` + `/imu_yaw` + `/chcnav/odom`）；
+   - `lslidar_ros2-master`（镭神激光雷达，发 `/cx/lslidar_point_cloud`，**编译需 `libpcap-dev`**）；
+   - `radar_can_parser`（毫米波雷达，can0）、`ultrasonic_radar_driver`（超声波雷达，vcan3）；
+   - `msg_interfaces`（自定义消息）；
+   - `car_autonomous_pkg`：**拆解仅保留 CAN 桥接**——`can_bridge_node` + `can_manager` +
+     `message_handler` + `vehicle_params` + `*.dbc`；原 `path_follower_node` / `obstacle_avoider` /
+     `path_recorder` / `trajectory_visualizer` / `control_logger` 等规划控制节点全部删除，由
+     `baja_cloud_sim` 替代；`setup.py` 的 entry_points 仅留 `can_bridge_node`，`package.xml` 精简依赖。
+2. **核心节点零改动 + launch remap 对齐**——`path_follower` / `frenet_planner` / `evaluator`
+   的订阅话题保持仿真标准名（`/gps/fix` / `/imu/yaw` / `/ground_truth/odom`），实车 launch 通过
+   remap 把硬件话题（`/chcnav/devpvt` / `/imu_yaw` / `/chcnav/odom`）映射过来；`/cmd_control`
+   （AckermannDriveStamped）与 `can_bridge_node` **天然对齐**，无需改动。仿真专用节点
+   （`truth_perception` / `actuator_adapter` / `video_recorder` / `gz_pcl_bridge`）在实车 launch
+   中不启动。
+3. **新增实车运行入口与 launch**——
+   - `run_real.sh`（实车自主）、`run_real_remote.sh`（实车视驾）、`run_record.sh`（实车路径录制）；
+   - `real_car.launch.py` / `real_car_remote.launch.py` / `path_record.launch.py`；
+   - `remote_simulation.launch.py`（仿真视驾，`remote_control_node` 仿真/实车共用）。
+4. **新增 `csv_to_centerline_node` + `path_recorder_node`**——
+   - `csv_to_centerline`：将赛前录制的最佳路径 CSV 航点转为 `/reference_centerline`
+     （latched Path）喂给 Frenet 在线规划，兼容"先跑最佳线、再实时规划"的比赛流程；
+   - `path_recorder`：订阅 `/gps/fix` + `/imu/yaw`，按 0.5 m 间距自动采点写 CSV（录制时与
+     手柄/遥控器独立驱动车辆互不冲突）。
+5. **`evaluator_node` 支持实车模式**——新增 `use_scenario` 参数（默认 `true`）：仿真保留原
+   scenario_file 逻辑；实车置 `false` 时从 `/reference_centerline` + `/obstacle_markers` 实时
+   获取中心线与障碍，转向反馈改订阅 `can_bridge` 发布的 `/vehicle_status`。
+6. **参数分裂**——新增 `config/real_car_params.yaml`（无 `use_sim_time`、无 Gazebo 专用节点，
+   含 csv_to_centerline/frenet/path_follower/evaluator/remote_control/can_bridge 参数）与
+   `config/real_car.rviz`。
+7. **删除冗余**——原 `ros2_ws/` 目录（硬件包已迁入 `src/hardware/`，用户已有备份）与
+   `run_line.sh`（直线赛道逻辑已并入 `run.sh --finish-mode line`）均删除。
+
+> **融合原则**：核心算法与控制器（横向 LQR + 前馈、纵向实车开环、EPS 仿真层模型）保持不动；
+> 平台差异（仿真 Gazebo 真值 vs 实车硬件传感器、Gazebo cmd_vel vs VCU CAN）**仅由 launch
+> 与 `src/hardware/` 包裹**，不侵入规划-控制-感知核心。
 
 ### v2 相对 v1.5 的变更
 
