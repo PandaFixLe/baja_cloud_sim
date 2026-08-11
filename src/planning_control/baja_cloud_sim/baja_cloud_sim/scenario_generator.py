@@ -285,7 +285,13 @@ def generate(output: Path, seed: int, obstacle_count: int, package_share: Path, 
     }
     scenario_path.write_text(json.dumps(scenario, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, centerline[0], road_surface,
+    # Offset start pose: 1.5 m lateral (left) + 15° outward yaw offset
+    # (30°会让LQR必然饱和方波化, 15°给LQR不饱和的修正空间)
+    start = dict(centerline[0])
+    start["y"] += 1.5
+    start["yaw"] += math.radians(15.0)
+
+    world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, start, road_surface,
                              tires=tires)
     world_path.write_text(world, encoding="utf-8")
     return {"world": str(world_path), "scenario": str(scenario_path), "mesh": str(mesh_path)}
@@ -331,7 +337,14 @@ def generate_loop(output: Path, seed: int, obstacle_count: int, package_share: P
         "runout_m": 0.0,
     }
     scenario_path.write_text(json.dumps(scenario, ensure_ascii=False, indent=2), encoding="utf-8")
-    world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, centerline[0], road_surface,
+
+    # Offset start pose: 1.5 m lateral (left) + 15° outward yaw offset
+    # (30°会让LQR必然饱和方波化, 15°给LQR不饱和的修正空间)
+    start = dict(centerline[0])
+    start["y"] += 1.5
+    start["yaw"] += math.radians(15.0)
+
+    world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, start, road_surface,
                              tires=tires)
     world_path.write_text(world, encoding="utf-8")
     return {"world": str(world_path), "scenario": str(scenario_path), "mesh": str(mesh_path)}

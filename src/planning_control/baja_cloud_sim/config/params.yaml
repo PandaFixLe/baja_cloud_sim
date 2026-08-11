@@ -15,7 +15,7 @@ frenet_planner_node:
     use_sim_time: true
     origin_latitude: 30.0
     origin_longitude: 114.0
-    horizon_m: 50.0
+    horizon_m: 30.0
     center_weight: 1.0
     clearance_weight: 12.0
     desired_clearance: 1.2
@@ -51,26 +51,26 @@ path_follower_node:
     min_speed_obstacle: 2.0
     lqr_R: 3.0
     lqr_v_norm: 1.5
-    lqr_Q: [0.05, 8.0, 2.0, 4.0, 4.0] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] — 索引4(e_psi_dot/yaw-rate)0.5→4.0: 急弯极限环振荡根因是yaw-rate阻尼过弱, 提至与e_psi同级抑制饱和翻转振荡
+    lqr_Q: [0.05, 3.0, 4.0, 3.0, 4.0] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] — P/D均衡: 起步收敛好, 弯道跟随需靠Q1=3.0
     # 方案 G: 反馈项速度自适应软化. 高速时小误差不应激进修, 防止放大成蛇形.
     # beta(v) = 1/(1+alpha*(v-v_ref)), 饱和到 [beta_min, 1.0]. alpha=0 关闭.
-    fb_speed_soften_alpha: 0.6        # J1: 削弱 0.3→0.6, 高速直道反馈强度减半防残差累积爆发
+    fb_speed_soften_alpha: 0.3        # J1: 削弱 0.3→0.6, 高速直道反馈强度减半防残差累积爆发
     fb_speed_ref: 2.5                  # 低于此速度 beta=1.0(不软化)
-    fb_speed_beta_min: 0.4             # J1: beta 下限 0.5→0.4, 高速反馈弱化至 40%
-    e_psi_ma_window: 5               # K1: e_psi 移动平均窗口(控制周期数, 5≈0.25s), 滤除参考点跳变引起的 e_psi 阶跃
+    fb_speed_beta_min: 0.6       # J1: beta 下限 0.5→0.4, 高速反馈弱化至 40%
+    e_psi_ma_window: 0             # K1: 关闭e_psi移动平均(原5≈0.25s滞后延长饱和段), s_proj_lookahead+last_idx已缓解跳变
     # ── 转向输出平滑 (实车轮胎友好，避免高频极端反向) ──
     lqr_max_steering: 0.4538         # LQR 输出幅值上限 (rad)，对齐 max_steering_angle=26°
     lqr_velocity_recompute_threshold: 1.0  # DARE 重解阈值 (放宽，减少速度波动触发重解)
     dare_solve_interval: 50              # DARE 强制重解步数间隔 (50×0.05s=2.5s，减少 K 跳变频率)
     max_steer_rate: 1.2              # 控制器侧转向速率上限(rad/s≈68°/s) — 宽松, 让 LQR 修正指令完整到达 EPS; 真实齿条 15°/s 约束由 EPS(actuator_adapter)施加, 此处不重复限速(重复限速会废掉修正能力)
-    steer_lowpass_alpha: 0.9         # 输出一阶低通系数: 0.5→0.9, 闭环诊断 bag 显示原值致 actual_steer 滞后 cmd~0.8s(转向笨重), 提至0.9让指令快速到位(仍<1不抖)
-    state_lowpass_alpha: 0.45        # 反馈状态(yaw_rate/vel)低通系数 — 0.25 会过度滞后破坏弯道
+    steer_lowpass_alpha: 1.0        # 输出一阶低通系数: 0.5→0.9, 闭环诊断 bag 显示原值致 actual_steer 滞后 cmd~0.8s(转向笨重), 提至0.9让指令快速到位(仍<1不抖)
+    state_lowpass_alpha: 0.75        # 反馈状态(yaw_rate/vel)低通系数 — 0.25 会过度滞后破坏弯道
                                       # 响应(0.2s 滞后吃掉 LQR 相位裕度导致弯道饱和), 回退至 0.45;
                                       # 直道稳态抖动改由 EPS 输出端绝对死区(eps_output_deadband_deg)治理
     cmd_steer_deadband_deg: 1.5      # J3+K3: 指令端绝对死区(deg) — 平滑后转向指令<1.5°强制归零,
                                       # 配合 EPS 死区1°+输出死区0.5° 共3°小角度不响应区间, 吃掉中等抖动
-    s_proj_lookahead: 0.8
-    max_lateral_accel: 0.7            # 弯道侧向加速度上限(m/s²) — 0.9→0.7: 急弯(第三弯)更保守限速, 从源头降进弯速度防极限环出界
+    s_proj_lookahead: 2.0
+    max_lateral_accel: 1.0            # 弯道侧向加速度上限(m/s²) — 0.7太保守致弯道速度过低LQR跟不住, 提至1.0让弯道有足够速度
     curvature_lookahead_m: 6.0            # 曲率前瞻距离(m): 出弯加速延后防弯切直蛇形, 0=关闭(用当前点曲率)
     pre_decel_lookahead_m: 18.0           # 前向预减速前瞻(m): 12→18, 急弯前更早更平滑降速, 给转向余量避免饱和翻转. 0=关闭
     pre_decel_max: 1.0                    # 预减速段最大减速度(m/s²): 1.5→1.0, 更温和过渡带更长, 转向角需求更平顺
@@ -94,7 +94,7 @@ path_follower_node:
     min_obstacle_range: 0.5
 
     # 实车纵向为开环：软件侧只发期望速度设定值，速度闭环由电机控制器完成。
-    idle_speed: 1.0            # 蠕行保底速度（决策层仍用，非 PID）
+    idle_speed: 0.6            # 蠕行保底速度(起步大偏离时航向门用)
     # ── 速度档位 (speed tier) ──
     # 仅调直线段最大速度，弯道/避障/地形降速逻辑不动。
     # slow≈均速2.5 / normal≈均速4.0 / fast≈均速4.5

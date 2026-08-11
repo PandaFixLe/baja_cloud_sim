@@ -529,24 +529,25 @@ Gazebo `AckermannSteering` 插件将 `<min/max_acceleration>` 与 `<min/max_jerk
 path_follower_node:
   ros__parameters:
     enable_lqr: true
-    lqr_Q: [0.05, 8.0, 2.0, 4.0, 4.0]  # [∫e_y, e_y, ė_y, e_ψ, ė_ψ]
-                                        #   v2.7: lqr_Q[4](ė_ψ) 0.5→4.0, 抑制航向角速度误差→弯道更稳
+    lqr_Q: [0.05, 3.0, 4.0, 3.0, 4.0]  # [∫e_y, e_y, ė_y, e_ψ, ė_ψ]
+                                        #   v2.7-test: 8.0→3.0(e_y权重降,减饱和) / 2.0→4.0(ė_y增阻尼);
+                                        #   配合初始偏航从30°→15°使 LQR 调整真正生效(26°物理钳位曾吃掉Q调整)
     lqr_R: 3.0                          # 控制量惩罚（越大转向越柔和）
     lqr_v_norm: 1.5                     # 增益调度归一化速度
     lqr_velocity_recompute_threshold: 1.0  # DARE 重解速度触发阈值 (m/s)
     dare_solve_interval: 50             # DARE 强制重解步数间隔 (50×0.05s=2.5s)
-    s_proj_lookahead: 0.8               # 参考点弧长前视 (m)
-    max_steering_angle: 35.0
+    s_proj_lookahead: 2.0               # 参考点弧长前视 (m) — v2.7-test: 0.8→2.0, 加大预瞄缓解参考点跳变
+    max_steering_angle: 26.0            # 物理钳位 26°（EPS 齿条满打上限, 仿真真实建模）
     max_steer_rate: 1.2                 # 控制器侧转向速率上限 (rad/s) ≈ 69°/s — 宽松,
                                         # 让 LQR 修正指令完整到达 EPS; 真实齿条 15°/s
                                         # 约束由 EPS(actuator_adapter)施加, 此处不重复限速
-    steer_lowpass_alpha: 0.9            # 输出一阶低通系数 (v2.7: 0.5→0.9, 进一步减重相位滞后,
-                                        # 避免平滑吃掉纠偏高频分量导致蛇形)
-    state_lowpass_alpha: 0.45           # 反馈状态(yaw_rate/vel)低通系数
-    fb_speed_soften_alpha: 0.6          # 速度自适应反馈软化系数 α (0.6: 高速直道反馈强度减半)
+    steer_lowpass_alpha: 1.0            # 输出一阶低通系数 — v2.7-test: 0.9→1.0, 彻底去相位滞后让指令即时到位
+    state_lowpass_alpha: 0.75           # 反馈状态(yaw_rate/vel)低通系数 — v2.7-test: 0.45→0.75, 原0.25过度滞后致弯道饱和
+    fb_speed_soften_alpha: 0.3          # 速度自适应反馈软化系数 α (0.3: 高速直道反馈强度减半)
     fb_speed_ref: 2.5                   # 参考速度 (m/s), 低于此速度 β=1.0(不软化)
-    fb_speed_beta_min: 0.4              # β 下限, 防止极端高速反馈完全失效 (0.4: 高速反馈弱化至 40%)
-    e_psi_ma_window: 5                  # K1: e_psi 移动平均窗口(控制周期, 5≈0.25s), 滤除参考点跳变阶跃
+    fb_speed_beta_min: 0.6              # β 下限, 防止极端高速反馈完全失效 (0.6: 高速反馈弱化至 60%)
+    e_psi_ma_window: 0                  # K1: v2.7-test 关闭 e_psi 移动平均(原5≈0.25s滞后延长饱和段),
+                                        # s_proj_lookahead 加大 + last_idx 跟踪已缓解参考点跳变, 关闭后起步收敛更快
     cmd_steer_deadband_deg: 1.5         # K3: 指令端绝对死区(deg), 平滑后|<1.5° 强制归零, 配合 EPS 共约 3° 不响应区间
 ```
 
@@ -559,18 +560,35 @@ path_follower_node:
 ### 纵向控制
 
 ```yaml
-    idle_speed: 1.0         # 怠速下限 (m/s)
+    idle_speed: 0.6         # 怠速下限 (m/s) — v2.7-test: 1.0→0.6, 起步大偏离时由航向门钳到该蠕行速度防冲过线
     # 注：级联 PID 速度环参数已在 v2.7 清理中删除；实车纵向为开环发设定值，
     #     速度闭环由电机控制器完成，此处不再列示 lon_kp/ki/kd 等参数。
 ```
+
+**航向门（v2.7-test 新增，`_compute_longitudinal_target` 内）**——起步/突发大偏离时车身尚未对齐规划线，
+若直接按 4 m/s 巡航会"加速冲过轨迹"导致蛇形。新增双因子门：
+
+```python
+e_psi = float(command.get("heading_error", 0.0))   # 车头相对参考航向角误差
+e_y_val = abs(float(command.get("e_y", 0.0)))       # 横向偏移
+# 双条件同时满足才钳到 idle_speed(0.6): 车头偏且横向也明显偏
+if abs(e_psi) > math.radians(8.0) and e_y_val > 0.5 and not braking_to_stop:
+    v_ref = min(v_ref, self._idle_speed)
+```
+
+设计要点：
+- **双因子（e_ψ > 8° 且 |e_y| > 0.5 m）**而非单看 e_ψ：弯道里 |e_y| 通常 < 0.5 m（车已在线上只是车头偏），
+  不会被误钳；只有起步/被推离线的"车头偏 + 横移 > 0.5 m"组合才触发防冲过线。
+- 触发后降到 `idle_speed(0.6)` 蠕行，待车身回正、|e_y| 收敛后自动解除，速度恢复速度剖面。
+- 与 `idle_speed` 的区别：`idle_speed` 是无条件怠速保底（防趴窝），航向门是条件性"纠偏期限速"。
 
 ### 速度剖面与安全
 
 ```yaml
     use_speed_profile: true
     speed_profile_max: 4.0        # fallback/历史兼容: tier 非法时退回此值
-    max_lateral_accel: 0.7        # 弯道侧向加速度上限 (m/s²) — v2.7: 0.8→0.7, 弯道更保守更稳
-                                #   (回退自 1.6, 1.6 自跑反而出界更重; 真车建议再降到 0.5~0.6)
+    max_lateral_accel: 1.0        # 弯道侧向加速度上限 (m/s²) — v2.7-test: 0.7→1.0, 原0.7过保守使弯道速度过低(0.6-0.7m/s),
+                                #   LQR 实际仍能跟住 1.0; 真车建议回退到 0.5~0.6 留安全裕度
     curvature_lookahead_m: 6.0    # 曲率前瞻+后视距离 (m): 双向约束, 出弯加速延后防弯切直蛇形
                                 #   v2.7: 3.0→6.0, 更大窗口→进弯更早减速
     curvature_smooth_window: 8    # 曲率平滑窗口 (v2.7: 4→8), 抑制局部尖峰导致的 v_ref 抖动
@@ -819,6 +837,8 @@ core/                      ← 当前生效的算法包
 └── config.py                控制器配置数据类（LQRConfig 等）
 
 scenario_generator.py      按 seed 生成 SDF 世界 + OBJ 路面 + scenario.json
+                          ★ v2.7-test 方案A：组装 start 时对所有 scenario 注入通用起始偏移
+                            （y +1.5 m 横向 + 初始偏航 +15° 朝外），用于测试"起步大偏离恢复能力"
 truth_perception_node.py   由真值里程计派生带噪声的定位/GPS/IMU/中心线/边界/障碍（仿真用）
 mock_perception_node.py    ★ 模拟感知组信息流（实车对接调试用，非运行必需）
 frenet_planner_node.py     10 Hz 规划，输出 /planned_path 与 /planner/status
@@ -1050,6 +1070,7 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
 | **`v2.5`** | **v2.5** | **LQR + 前馈 + 开环纵向** | **环境快照/恢复脚本 + 测试缓存清理(`.pytest_cache`/`.claude` 入 ignore) + 安装/运行脚本与文档同步** |
 | **`v2.6`** | **v2.6** | **LQR + 前馈 + 开环纵向** | **仿真层与实车层融合：`src/hardware/` 迁入供应商硬件驱动（chcnav/lslidar/radar/ultrasonic/msg_interfaces/car_autonomous_pkg 仅留 CAN 桥接）；核心节点零改动 + launch remap 对齐；新增实车 launch 与 `run_real*.sh`/`run_record.sh`；`csv_to_centerline`/`path_recorder` 节点；`evaluator` 支持 `use_scenario=false` 实车模式；删除 `ros2_ws/` 与 `run_line.sh`** |
 | **`v2.7`** | **v2.7** | **LQR + 前馈 + 开环纵向** | **弯道稳定性再调优（实跑验证：弯道提前减速、道中稳定低速、出弯平稳缓加速）：`max_lateral_accel` 0.8→0.7、`pre_decel_lookahead_m` 8→18、`pre_decel_max` 1.5→1.0、`curvature_lookahead_m` 3→6、`curvature_smooth_window` 4→8、`v_ref_lowpass_alpha` 0.75→0.5、`steer_lowpass_alpha` 0.5→0.9、`lqr_Q[4]`(ė_ψ) 0.5→4.0；修复 `use_boundary` 开关失效（`frenet_planner_node` 补参数声明/读取/回调判断 + `simulation.launch.py` 默认值改从 `params.yaml` 读取，默认 `false` 纯跟踪）；修复 `path_follower` 闭环赛道投影 `IndexError` 崩溃（loop 模式 `i_next=(i+1)%n` wrap）** |
+| **`v2.7-test`** | **v2.7-test** | **LQR + 前馈 + 开环纵向** | **起步大偏离恢复能力测试与调参（脱离 v2.7 主线的实验分支）：方案A 起始位姿偏移（`scenario_generator` 对所有 scenario 注入 y+1.5m + 初始偏航 +15°，测试"大偏离恢复"）；新增**航向门**双因子限速（`_compute_longitudinal_target`：e_ψ>8° 且 \|e_y\|>0.5m 才钳到 idle_speed 防冲过线，弯道不误伤）；调参 `lqr_Q`[8.0,2.0,0.5,4.0]→[3.0,4.0,3.0,4.0]（降 e_y 权重减饱和 / 增 ė_y 阻尼）、`idle_speed` 1.0→0.6、`max_lateral_accel` 0.7→1.0（弯道不再过慢）、`e_psi_ma_window` 5→0（关移动平均去 0.25s 滞后）、`s_proj_lookahead` 0.8→2.0（加大预瞄）、`steer_lowpass_alpha` 0.9→1.0、`state_lowpass_alpha` 0.45→0.75、`max_steering_angle` 35→26（物理钳位建模）。未新增算法、未动 EPS 物理约束（15°/s 转速上限）。验证：起步 1.5m+15° 偏离收敛至贴线（center 1.5→0.005）、直道 4m/s 巡航、弯道不冲出赛道** |
 
 ### v2.1 相对 v2 的变更
 

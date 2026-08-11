@@ -861,6 +861,14 @@ class PathFollowerNode(Node):
                         f'[SPEED-DIAG #{self._diag_tick}] v_ref={v_ref:.1f} '
                         f'raw={v_ref_raw:.1f} actual={self._current_speed:.1f}')
 
+        # P0: 航向+横向双因子门 — 车头偏且横向也偏时禁止高速.
+        # 双条件: e_psi>8° 且 |e_y|>0.5m 才钳到 idle_speed.
+        # 弯道里 e_y 通常<0.5m 不触发; 起步偏离>1m 时触发防冲过线.
+        e_psi = float(command.get("heading_error", 0.0))
+        e_y_val = abs(float(command.get("e_y", 0.0)))
+        if abs(e_psi) > math.radians(8.0) and e_y_val > 0.5 and not braking_to_stop:
+            v_ref = min(v_ref, self._idle_speed)
+
         # P1: 反馈饱和时主动降速 — 转向已贴物理极限, 继续高速只会累积偏差脱轨.
         # 原实现 v_ref *= 0.6 为瞬时降速, 脱离饱和当帧立刻回到 speed_profile 原值,
         # 导致弯里"减速完该调车身却加速". 改为: 饱和时把 v_ref 钳到一个较低目标
