@@ -339,7 +339,7 @@ frenet_planner (10 Hz)
        ▼
 path_follower (20 Hz, dt=0.05 s)
   ├─ 速度剖面   曲率上限 → 前向加速约束 → 后向减速约束
-  │             → clearance/terrain 降速 → 后向可行性再传播
+  │             → clearance 降速 → 后向可行性再传播
   ├─ 横向       LQR + 前馈（主）/ 纯追踪（fallback）
   ├─ 纵向       实车开环：决策层(速度剖面/finish/障碍) + idle 保底 → 期望速度设定值
   ├─ 安全       3 级状态机 NORMAL / SLOWDOWN / EMERGENCY
@@ -437,16 +437,22 @@ v_out  = max(v_ref, idle_speed)        # idle 怠速/蠕行保底
   且增益互相"吃掉"。
 - 保留 `idle_speed` 怠速下限，避免起点无动力趴窝、或静止触发 finish 后被取消蠕行
   导致永远起不了步（仅当 `_finished` 或 finish 刹车进站时才允许降到 0）。
-- `lon_kp/lon_ki/lon_kd/lon_i_limit/lon_accel_step/lon_decel_step/slope_comp_gain`
-  等 PID 参数在 `params.yaml` 中**保留未删**（避免破坏声明），但实车开环路径下不再参与
-  控制流；如需恢复仿真期 PID 跟随，可在 `path_follower_node._compute_longitudinal_target`
-  中还原。
+- 上游软件侧的 cascaded-PID 速度环参数（`lon_kp/lon_ki/lon_kd/lon_i_limit/
+  lon_accel_step/lon_decel_step/slope_comp_gain`）已在 v2.7 清理中**彻底移除**（yaml
+  声明、节点 `declare_parameter`、积分状态量、以及 `_compute_longitudinal_target` 里的
+  旁路分支全部删除），不再保留历史残留；如需仿真期 PID 跟随，需重新实现该速度环。
 - 坡度补偿（上坡前馈）在实车上交由电机控制器处理。
+- **特殊地形降速**已统一由 `flat_ground` 感知障碍物类（`_ground_derate` 纵向平滑降速）
+  处理；旧版基于中心线坡度的 `use_terrain_profile` / `terrain_slope_threshold` /
+  `terrain_min_speed` 及 `_derate_speed_profile` 内整段 terrain derating、`_terrain_slope_at`
+  方法均在 v2.7 清理中删除。
 
-**历史说明（仿真期级联 PID）**：v2.3 及以前纵向为
+**历史说明（仿真期级联 PID，v2.7 已删除）**：v2.3 及以前纵向为
 `a_cmd = Kp·e_v + Ki·∫e_v + Kd·ė_v + 9.81·sin(θ_road)·slope_comp_gain`，
 积分得 `v_tgt` 再经 accel/jerk 速率限制。该方案解决了横向误差硬阈值引发的直线速度
-极限环（P1）；v2.4 为对接实车电机闭环改为开环发设定值。
+极限环（P1）；v2.4 为对接实车电机闭环改为开环发设定值；**对应的 `lon_kp/ki/kd`、
+`slope_comp_gain`、`lon_accel_step/decel_step` 等参数与实现已在 v2.7 清理中彻底移除**，
+此处仅作历史参考。
 
 ### 安全 — 3 级状态机
 
@@ -553,14 +559,9 @@ path_follower_node:
 ### 纵向控制
 
 ```yaml
-    lon_kp: 2.0
-    lon_ki: 0.5
-    lon_kd: 0.2
-    lon_i_limit: 2.0        # 积分限幅
     idle_speed: 1.0         # 怠速下限 (m/s)
-    slope_comp_gain: 1.0    # 坡度重力补偿增益
-    lon_accel_step: 0.20    # m/s per 50 ms ≈ 4.0 m/s²
-    lon_decel_step: 0.25    # ≈ 5.0 m/s²
+    # 注：级联 PID 速度环参数已在 v2.7 清理中删除；实车纵向为开环发设定值，
+    #     速度闭环由电机控制器完成，此处不再列示 lon_kp/ki/kd 等参数。
 ```
 
 ### 速度剖面与安全
@@ -579,8 +580,6 @@ path_follower_node:
     v_ref_lowpass_alpha: 0.5      # v_ref 帧间低通系数: v2.7: 0.75→0.5, 更平滑抹平 10Hz 刷新锯齿
     desired_clearance: 3.5        # 障碍降速起始距离
     min_speed_obstacle: 2.0
-    terrain_slope_threshold: 0.06
-    terrain_min_speed: 1.0
     tier_slow_speed: 2.5          # slow 档: 直线段最大速度
     tier_normal_speed: 4.0        # normal 档: 直线段最大速度
     tier_fast_speed: 4.5          # fast 档: 直线段最大速度
@@ -591,7 +590,6 @@ path_follower_node:
 ```yaml
 path_follower_node:
   ros__parameters:
-    use_terrain_profile: false     # 实车对接感知后统一由 flat_ground 处理地形降速
     obstacle_classes:
       tall:
         lateral_avoid: true        # 高障碍：横向避让 + 按 clearance 减速
@@ -715,8 +713,8 @@ frenet_planner_node:
 | 贴线不够紧 | 增大 `lqr_Q[1]`，或增大 `lqr_Q[0]`（积分项） |
 | 弯道切内侧 | 增大 `s_proj_lookahead` |
 | 弯道外抛 | 减小 `s_proj_lookahead`，或减小 `max_lateral_accel` |
-| 直线速度波动 | 检查 `lon_kd` 是否过大；`lon_ki` 过大会积分超调 |
-| 上坡掉速 | 增大 `slope_comp_gain` |
+| 直线速度波动 | 检查 `v_ref_lowpass_alpha` 是否过小；`speed_profile_max` 与 tier 速度是否匹配 |
+| 上坡掉速 | 实车纵向开环，速度闭环在电机控制器；若感知有 `flat_ground` 标记，检查 `_ground_derate` 的 `slow_speed` |
 
 ---
 
@@ -824,7 +822,7 @@ scenario_generator.py      按 seed 生成 SDF 世界 + OBJ 路面 + scenario.js
 truth_perception_node.py   由真值里程计派生带噪声的定位/GPS/IMU/中心线/边界/障碍（仿真用）
 mock_perception_node.py    ★ 模拟感知组信息流（实车对接调试用，非运行必需）
 frenet_planner_node.py     10 Hz 规划，输出 /planned_path 与 /planner/status
-path_follower_node.py      ★ 核心控制器（横向 LQR + 纵向 PID + 状态机）
+path_follower_node.py      ★ 核心控制器（横向 LQR + 纵向开环 + 状态机）
 actuator_adapter_node.py   /cmd_control → /model/baja_vehicle/cmd_vel（仿真用）
                           ★ 内置 EPS 执行器模型（15°/s 转速上限 + 1° 死区，仿真层）
 evaluator_node.py          指标计算与 CSV 记录（实车模式 use_scenario=false，从 /reference_centerline + /obstacle_markers 实时获取）
@@ -862,10 +860,11 @@ car_autonomous_pkg/       ★ 仅保留 CAN 桥接：can_bridge_node + can_manag
 | 文件 | 说明 |
 |------|------|
 | `core.py`（顶层，1077 行） | v1.0 单体核心。与 `core/` 目录同名，Python 的包优先级使 `from .core import ...` **始终解析到 `core/` 目录**，此文件从未被导入 |
-| `lqr_controller.py` | v1.2/v1.3 的 LQR 实现（含离线增益表）。当前使用的是 `core/controller.py` |
-| `trajectory_smoother.py` | Bézier 平滑 + TrajectoryTable，仅被上面的 `lqr_controller.py` 依赖 |
 
 > 修改控制算法请定位到 **`core/controller.py`** 与 **`path_follower_node.py`**。
+> 旧版 `lqr_controller.py`（v1.2/v1.3 含离线增益表的 LQR 实现）及其单测
+> `test/test_lqr_controller.py` 已在 v2.7 清理中删除，当前 LQR 仅由
+> `core/controller.py` 提供；`trajectory_smoother.py` 若仅被旧 LQR 依赖亦随之移除。
 
 ---
 
@@ -1134,10 +1133,9 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
    原 `core.py` 成为与子包**重复实现**的桥接残留，且内含 `stanley_path_control` /
    `lqr_path_control` 等**死代码**（仅被旧 import 引用，node 层从未调用）。
    删除后 `baja_cloud_sim.core` 自动解析到 `core/` 包，`core/__init__.py` 的
-   re-export 已覆盖全部外部符号（`legacy_path_control`、`signed_lateral`、
-   `terrain_height` 等），删除安全。
+   re-export 已覆盖全部外部符号（`legacy_path_control`、`signed_lateral` 等），删除安全。
 2. **拆分 `path_follower_node.py` 的 `_control` 超级方法（278 行）**——原方法揉合了
-   finish watchdog、infeasible 守卫、LQR/纯追踪分发、速度 PID、安全状态机、转向输出
+   finish watchdog、infeasible 守卫、LQR/纯追踪分发、纵向开环、安全状态机、转向输出
    等多职责，且 finish pre-check 时序耦合脆弱（大量"绕坑"注释）。
    拆分为四个职责清晰的方法：
    - `_guard_finish_and_infeasible()`：finish watchdog / pre-check / infeasible 计数 / 硬停车守卫
@@ -1207,9 +1205,10 @@ pkill -f "gz sim"; pkill -f "ros_gz_bridge"; pkill -f "robot_state_publisher"
    - 保留 `idle_speed` 怠速/蠕行保底（仅 `_finished` 或 finish 刹车进站时允许降到 0）；
    - 速度剖面、finish 限速、障碍/地形降速、安全状态机这些**决策层**全部保留（产出
      `v_ref`）——它们决定"该跑多快"，不属于执行器闭环，应留在算法核心；
-   - `lon_kp/lon_ki/lon_kd/lon_i_limit/lon_accel_step/lon_decel_step/slope_comp_gain`
-     等 PID 参数在 `params.yaml` 中**保留未删**（仅声明、不参与控制流），便于回退或
-     仿真期需要 PID 跟随时还原。
+   - 上游软件侧的 cascaded-PID 速度环参数（`lon_kp/lon_ki/lon_kd/lon_i_limit/
+     lon_accel_step/lon_decel_step/slope_comp_gain`）已在 v2.7 清理中**彻底删除**（yaml
+     声明、节点 `declare_parameter`、积分状态量、以及 `_compute_longitudinal_target`
+     里的旁路分支全部移除），不再保留历史残留；如需仿真期 PID 跟随需重新实现。
    - **设计依据**：电机控制器速度闭环与 ROS 节点 PID 是串级关系，上游再做一层速度环
      会与底层叠加限幅，使加减速变肉、增益互相吸收；实车只需发设定值。
 2. **感知开关 `use_perception`**——`simulation.launch.py` 新增启动参数：

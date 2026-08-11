@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from enum import Enum
+from typing import List
 
 import rclpy
 from ackermann_msgs.msg import AckermannDriveStamped
@@ -174,15 +175,9 @@ class PathFollowerNode(Node):
         self._speed_cfg = SpeedProfileConfig(
             min_speed_obstacle=float(self.get_parameter("min_speed_obstacle").value),
         )
-        # terrain-aware speed derating (disabled by default post perception-port;
-        # special terrain is handled via flat_ground obstacle class instead)
-        self.declare_parameter("terrain_slope_threshold", 0.06)
-        self._terrain_slope_threshold = float(self.get_parameter("terrain_slope_threshold").value)
-        self.declare_parameter("terrain_min_speed", 1.0)
-        self._terrain_min_speed = float(self.get_parameter("terrain_min_speed").value)
-        self.declare_parameter("use_terrain_profile", False)
-        self._use_terrain_profile = bool(self.get_parameter("use_terrain_profile").value)
         # obstacle classification (ns="tall" / ns="flat_ground")
+        # 特殊地形降速已统一由 flat_ground 障碍物类（感知 Marker）处理，
+        # 不再基于中心线坡度做 terrain derating。
         self.declare_parameter("obstacle_classes.tall.desired_clearance", 1.5)
         self.declare_parameter("obstacle_classes.tall.min_speed", 1.5)
         self.declare_parameter("obstacle_classes.flat_ground.approach_distance", 5.0)
@@ -243,31 +238,15 @@ class PathFollowerNode(Node):
         # 避免 10Hz 路径刷新时取值索引在弯道跳动.
         self._vref_proj_last_idx: int = 0
 
-        # ── Longitudinal cascaded-PID params (Apollo-style) ──
-        self.declare_parameter("lon_kp", 2.0)
-        self.declare_parameter("lon_ki", 0.5)
-        self.declare_parameter("lon_kd", 0.2)
-        self.declare_parameter("lon_i_limit", 2.0)
+        # ── 纵向开环参数（软件侧只发期望速度，速度闭环在电机控制器）──
         self.declare_parameter("idle_speed", 1.0)
-        self.declare_parameter("slope_comp_gain", 1.0)
         self.declare_parameter("speed_profile_max", 3.5)
         self.declare_parameter("speed_tier", "normal")
         self.declare_parameter("tier_slow_speed", 2.5)
         self.declare_parameter("tier_normal_speed", 3.5)
         self.declare_parameter("tier_fast_speed", 4.5)
-        self.declare_parameter("lon_accel_step", 0.20)   # m/s per 50 ms ≈ 4.0 m/s²
-        self.declare_parameter("lon_decel_step", 0.25)   # ≈ 5.0 m/s²
-        self._lon_kp = float(self.get_parameter("lon_kp").value)
-        self._lon_ki = float(self.get_parameter("lon_ki").value)
-        self._lon_kd = float(self.get_parameter("lon_kd").value)
-        self._lon_i_limit = float(self.get_parameter("lon_i_limit").value)
         self._idle_speed = float(self.get_parameter("idle_speed").value)
-        self._slope_comp_gain = float(self.get_parameter("slope_comp_gain").value)
-        self._lon_accel_step = float(self.get_parameter("lon_accel_step").value)
-        self._lon_decel_step = float(self.get_parameter("lon_decel_step").value)
         self._dt = 0.05
-        self._lon_i = 0.0
-        self._lon_e_prev = 0.0
         # Lift speed-profile ceiling to a tracking-comfortable value.
         # speed_tier 选择直线段最大速度 (slow/normal/fast)；tier 非法时
         # 退回 speed_profile_max 作为 fallback，保证历史兼容。
@@ -467,7 +446,7 @@ class PathFollowerNode(Node):
         return max(self._idle_speed, self._flat_slow + (1.0 - ramp) * (current_speed - self._flat_slow))
 
     def _centerline_callback(self, message: PathMessage) -> None:
-        """Store centreline for terrain derating and finish-progress tracking."""
+        """Store centreline for finish-progress tracking."""
         pts = [(p.pose.position.x, p.pose.position.y, p.pose.position.z)
                for p in message.poses]
         if not pts:
@@ -630,13 +609,10 @@ class PathFollowerNode(Node):
         self._path_yaws = yaws
 
         self._speed_profile = plan_speed_profile(curvatures, arc, self._speed_cfg)
-        # ── Merged derating (clearance + terrain, single pass) ──
+        # ── clearance derating (single pass) ──
         self._speed_profile = _derate_speed_profile(
             path, arc, self._speed_profile, self._speed_cfg,
             self._obstacles, self._desired_clearance,
-            self._centerline_pts,
-            self._terrain_slope_threshold if self._use_terrain_profile else -1.0,
-            self._terrain_min_speed,
         )
         self._path_arc_lengths = arc
 
@@ -1015,25 +991,6 @@ class PathFollowerNode(Node):
         self.lookahead_pub.publish(lookahead)
 
 
-    def _terrain_slope_at(self, position) -> float:
-        """Local road grade (dz/ds) at the vehicle, from reference centreline z."""
-        pts = self._centerline_pts
-        if not pts or len(pts) < 2:
-            return 0.0
-        best_d2, best_k = float("inf"), 0
-        for k, (cx, cy, _cz) in enumerate(pts):
-            d2 = (position[0] - cx) ** 2 + (position[1] - cy) ** 2
-            if d2 < best_d2:
-                best_d2, best_k = d2, k
-        if best_k < len(pts) - 1:
-            x0, y0, z0 = pts[best_k]
-            x1, y1, z1 = pts[best_k + 1]
-            ds = math.hypot(x1 - x0, y1 - y0)
-            if ds > 1e-6:
-                return (z1 - z0) / ds
-        return 0.0
-
-
     def _update_progress(self) -> None:
         """Forward-tracked projection of the vehicle onto the centreline.
 
@@ -1301,12 +1258,13 @@ def _moving_average(values, window: int):
 def _derate_speed_profile(
     path, arc, speeds, cfg: SpeedProfileConfig,
     obstacles, desired_clearance: float,
-    centerline_pts, slope_threshold: float, terrain_min_speed: float,
 ) -> List[float]:
-    """Single-pass speed derating: clearance + terrain → min() of all constraints.
+    """Single-pass clearance-based speed derating.
 
     Clearance: v → min_speed_obstacle + (c/desired) * (v_in - min_speed_obstacle)
-    Terrain:   v → terrain_min_speed when |dz/ds| > slope_threshold
+
+    Special terrain (bumps/slopes) is handled separately via the flat_ground
+    obstacle class (perception Marker) in _ground_derate, not here.
     """
     from .core import point_to_oriented_box_clearance
     derated = list(speeds)
@@ -1323,37 +1281,6 @@ def _derate_speed_profile(
                 ratio = max(0.0, min_c / desired_clearance)
                 derated[i] = max(cfg.min_speed_obstacle,
                                  cfg.min_speed_obstacle + ratio * (speeds[i] - cfg.min_speed_obstacle))
-
-    # ── terrain derating (nearest-neighbour z lookup) ──
-    if centerline_pts and len(centerline_pts) > 1 and len(arc) >= 2:
-        # pre-compute dz per metre along centreline
-        cl_dz = [0.0]
-        for k in range(1, len(centerline_pts)):
-            ds = math.hypot(centerline_pts[k][0] - centerline_pts[k-1][0],
-                            centerline_pts[k][1] - centerline_pts[k-1][1])
-            dz = abs(centerline_pts[k][2] - centerline_pts[k-1][2]) / max(ds, 0.01)
-            cl_dz.append(dz)
-        for i, (px, py) in enumerate(path):
-            # find nearest centreline point by xy distance
-            best_d2, best_k = float("inf"), 0
-            for k, (cx, cy, _cz) in enumerate(centerline_pts):
-                d2 = (px - cx) ** 2 + (py - cy) ** 2
-                if d2 < best_d2:
-                    best_d2, best_k = d2, k
-            slope = cl_dz[min(best_k, len(cl_dz) - 1)]
-            # Check adjacent centreline indices so the derating zone is
-            # at least 3 samples wide — prevents a single-point speed dip
-            # that the vehicle cannot physically follow.
-            if best_k > 0:
-                slope = max(slope, cl_dz[best_k - 1])
-            if best_k < len(cl_dz) - 1:
-                slope = max(slope, cl_dz[best_k + 1])
-            # Proportional derating: ramp smoothly from full speed at
-            # slope=0 down to terrain_min_speed at slope_threshold+.
-            if slope > 0.0:
-                ratio = min(1.0, slope / slope_threshold)
-                derated[i] = min(derated[i],
-                                 terrain_min_speed + (1.0 - ratio) * (derated[i] - terrain_min_speed))
 
     # ── Re-run backward feasibility pass after derating ──
     # Derating clamps individual points (terrain bumps, obstacles).

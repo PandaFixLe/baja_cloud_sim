@@ -24,7 +24,7 @@ frenet_planner_node:
     # 车道线兜底走廊：use_boundary=false 或真实边界缺失/退化时，
     # Frenet 用中心线点自带 half_width(闭环中段3.75m/直线4.0m，fallback default_half_width)
     # 沿法向 ±half_width 生成保底走廊。仿真实车统一，不依赖外部车道线消息源。
-    default_half_width: 4.0
+    default_half_width: 2.0
     min_half_width: 1.5
     # 是否消费 /obstacle_markers 障碍物消息；false 时 frenet 不避障(纯跟踪)。
     # 等同 launch 的 use_obstacle 开关，yaml 改此处即可便捷切换。
@@ -44,7 +44,7 @@ path_follower_node:
     origin_longitude: 114.0
     target_speed: 2.5
     lookahead_distance: 3.0
-    kp_heading: 1.0
+    kp_heading: 1.0       #纯追踪在用
     max_steering_angle: 26.0
     use_speed_profile: true
     desired_clearance: 3.5
@@ -76,10 +76,7 @@ path_follower_node:
     pre_decel_max: 1.0                    # 预减速段最大减速度(m/s²): 1.5→1.0, 更温和过渡带更长, 转向角需求更平顺
     v_ref_lowpass_alpha: 0.5              # v_ref 帧间低通系数: 0.75→0.5, 抑制 planned_path 10Hz刷新致 s投影起点抖动把 v_ref 在弯道抬高的锯齿多峰; 0.4=纯历史 1=无低通
     curvature_smooth_window: 8            # 曲率滑动窗: 4→8, 太窄(4)把弯道尖峰削平致限速被抬高+出界卡死; 8仍滤噪但保留弯道特征, 进弯前限速生效防出界
-    terrain_slope_threshold: 0.06
-    terrain_min_speed: 1.0
-    use_terrain_profile: false       # 实车对接感知后统一由 flat_ground 障碍物处理地形降速
-    enable_lqr: true
+    enable_lqr: true       # 特殊地形降速统一由 flat_ground 感知障碍物类处理
     # ── 障碍物分类控制（感知组通过 /obstacle_markers 的 ns 区分类型）──
     # tall:         高障碍物，必须横向避让 + 按 clearance 减速
     # flat_ground:  特殊地面(土坡/减速带)，直线通过 + 平滑降速，不横向避让
@@ -96,13 +93,8 @@ path_follower_node:
     # 忽略传感器原点附近(车体自身/地面杂波)的虚假障碍检测，避免起点附近幽灵膨胀框
     min_obstacle_range: 0.5
 
-    # ── Longitudinal cascaded-PID (Apollo-style) ──
-    lon_kp: 2.0
-    lon_ki: 0.5
-    lon_kd: 0.2
-    lon_i_limit: 2.0
-    idle_speed: 1.0
-    slope_comp_gain: 1.0
+    # 实车纵向为开环：软件侧只发期望速度设定值，速度闭环由电机控制器完成。
+    idle_speed: 1.0            # 蠕行保底速度（决策层仍用，非 PID）
     # ── 速度档位 (speed tier) ──
     # 仅调直线段最大速度，弯道/避障/地形降速逻辑不动。
     # slow≈均速2.5 / normal≈均速4.0 / fast≈均速4.5
@@ -111,12 +103,10 @@ path_follower_node:
     tier_normal_speed: 4.0       # normal 档：直线段最大速度
     tier_fast_speed: 4.5          # fast 档：直线段最大速度
     speed_profile_max: 4.0       # fallback/历史兼容：tier 非法时退回此值
-    lon_accel_step: 0.20   # m/s per 50 ms ≈ 4.0 m/s²
-    lon_decel_step: 0.25   # ≈ 5.0 m/s²
     # ── Finish / 终点逻辑（line | circle | time | none） ──
     finish_mode: "none"            # none | line | circle | time
     finish_runout_m: 20.0          # 冲过终点后再 20m 停车区
-    finish_decel: 1.5              # 减速停车减速度（≤ lon_decel_step 等效 5，更丝滑）
+    finish_decel: 1.5              # 减速停车减速度（≈ 5 m/s² 等效，更丝滑）
     finish_s: -1.0                 # -1=自动(闭环→0 / 开放赛道→总长-runout)
     finish_target_lap: 1           # circle 仅用：跑满几圈后停
     finish_time_limit_s: 1200.0    # time 仅用：20 min

@@ -64,9 +64,6 @@ path_follower_node:
     pre_decel_max: 1.0
     v_ref_lowpass_alpha: 0.5
     curvature_smooth_window: 8
-    terrain_slope_threshold: 0.06
-    terrain_min_speed: 1.0
-    use_terrain_profile: false
     enable_lqr: true
     obstacle_classes:
       tall:
@@ -79,19 +76,13 @@ path_follower_node:
         slow_speed: 2.0
         default_half_width: 0.9
     min_obstacle_range: 0.5
-    lon_kp: 2.0
-    lon_ki: 0.5
-    lon_kd: 0.2
-    lon_i_limit: 2.0
+    # 实车纵向为开环：软件侧只发期望速度设定值，速度闭环由电机控制器完成。
     idle_speed: 1.0
-    slope_comp_gain: 1.0
     speed_tier: "normal"
     tier_slow_speed: 2.5
     tier_normal_speed: 4.0
     tier_fast_speed: 4.5
     speed_profile_max: 4.0
-    lon_accel_step: 0.20
-    lon_decel_step: 0.25
     finish_mode: "none"
     finish_runout_m: 20.0
     finish_decel: 1.5
