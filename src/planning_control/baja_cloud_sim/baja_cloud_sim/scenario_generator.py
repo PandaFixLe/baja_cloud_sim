@@ -289,7 +289,7 @@ def generate(output: Path, seed: int, obstacle_count: int, package_share: Path, 
     # (30°会让LQR必然饱和方波化, 15°给LQR不饱和的修正空间)
     start = dict(centerline[0])
     start["y"] += 1.5
-    start["yaw"] += math.radians(15.0)
+    start["yaw"] += math.radians(30.0)
 
     world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, start, road_surface,
                              tires=tires)
@@ -342,7 +342,7 @@ def generate_loop(output: Path, seed: int, obstacle_count: int, package_share: P
     # (30°会让LQR必然饱和方波化, 15°给LQR不饱和的修正空间)
     start = dict(centerline[0])
     start["y"] += 1.5
-    start["yaw"] += math.radians(15.0)
+    start["yaw"] += math.radians(30.0)
 
     world = _build_world_sdf(centerline, obstacles, mesh_path, package_share, start, road_surface,
                              tires=tires)

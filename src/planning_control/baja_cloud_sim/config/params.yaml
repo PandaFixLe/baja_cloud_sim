@@ -15,7 +15,7 @@ frenet_planner_node:
     use_sim_time: true
     origin_latitude: 30.0
     origin_longitude: 114.0
-    horizon_m: 30.0
+    horizon_m: 40.0           # 测试12: 30→40, 加长规划视野让速度剖面看到弯道, pre_decel 才能生效
     center_weight: 1.0
     clearance_weight: 12.0
     desired_clearance: 1.2
@@ -51,12 +51,12 @@ path_follower_node:
     min_speed_obstacle: 2.0
     lqr_R: 3.0
     lqr_v_norm: 1.5
-    lqr_Q: [0.05, 3.0, 4.0, 3.0, 4.0] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] — P/D均衡: 起步收敛好, 弯道跟随需靠Q1=3.0
+    lqr_Q: [0.05, 3.0, 6.0, 4.0, 5.0] # [∫e_y, e_y, e_y_dot, e_psi, e_psi_dot] — 测试4: 阻尼中提(Q2=6,Q4=5), 配合渐进恢复门. 积分恢复0.05, e_ψ略提4让航向先稳
     # 方案 G: 反馈项速度自适应软化. 高速时小误差不应激进修, 防止放大成蛇形.
     # beta(v) = 1/(1+alpha*(v-v_ref)), 饱和到 [beta_min, 1.0]. alpha=0 关闭.
-    fb_speed_soften_alpha: 0.3        # J1: 削弱 0.3→0.6, 高速直道反馈强度减半防残差累积爆发
-    fb_speed_ref: 2.5                  # 低于此速度 beta=1.0(不软化)
-    fb_speed_beta_min: 0.6       # J1: beta 下限 0.5→0.4, 高速反馈弱化至 40%
+    fb_speed_soften_alpha: 0.4          # 测试4: 0.6→0.4, 中等软化
+    fb_speed_ref: 1.5                   # 测试4: 1.0→1.5, 1.5以上才软化
+    fb_speed_beta_min: 0.5             # 测试4: 0.4→0.5, 高速反馈弱化到50%
     e_psi_ma_window: 0             # K1: 关闭e_psi移动平均(原5≈0.25s滞后延长饱和段), s_proj_lookahead+last_idx已缓解跳变
     # ── 转向输出平滑 (实车轮胎友好，避免高频极端反向) ──
     lqr_max_steering: 0.4538         # LQR 输出幅值上限 (rad)，对齐 max_steering_angle=26°
@@ -69,11 +69,11 @@ path_follower_node:
                                       # 直道稳态抖动改由 EPS 输出端绝对死区(eps_output_deadband_deg)治理
     cmd_steer_deadband_deg: 1.5      # J3+K3: 指令端绝对死区(deg) — 平滑后转向指令<1.5°强制归零,
                                       # 配合 EPS 死区1°+输出死区0.5° 共3°小角度不响应区间, 吃掉中等抖动
-    s_proj_lookahead: 2.0
-    max_lateral_accel: 1.0            # 弯道侧向加速度上限(m/s²) — 0.7太保守致弯道速度过低LQR跟不住, 提至1.0让弯道有足够速度
-    curvature_lookahead_m: 6.0            # 曲率前瞻距离(m): 出弯加速延后防弯切直蛇形, 0=关闭(用当前点曲率)
-    pre_decel_lookahead_m: 18.0           # 前向预减速前瞻(m): 12→18, 急弯前更早更平滑降速, 给转向余量避免饱和翻转. 0=关闭
-    pre_decel_max: 1.0                    # 预减速段最大减速度(m/s²): 1.5→1.0, 更温和过渡带更长, 转向角需求更平顺
+    s_proj_lookahead: 1.5
+    max_lateral_accel: 0.8            # 弯道侧向加速度上限(m/s²) — 测试11: 0.9→0.8, 弯道速度略降防外抛触发恢复模式
+    curvature_lookahead_m: 8.0            # 测试12: 6→8, 曲率前瞻更远, 进弯前更早识别弯道降速
+    pre_decel_lookahead_m: 20.0           # 测试12: 18→20(配合horizon=40), 提前减速前瞻, 不超过horizon的50%
+    pre_decel_max: 1.5                    # 测试12: 1.0→1.5, 提前减速段减力度加大, 让速度真降下来而非温和过渡
     v_ref_lowpass_alpha: 0.5              # v_ref 帧间低通系数: 0.75→0.5, 抑制 planned_path 10Hz刷新致 s投影起点抖动把 v_ref 在弯道抬高的锯齿多峰; 0.4=纯历史 1=无低通
     curvature_smooth_window: 8            # 曲率滑动窗: 4→8, 太窄(4)把弯道尖峰削平致限速被抬高+出界卡死; 8仍滤噪但保留弯道特征, 进弯前限速生效防出界
     enable_lqr: true       # 特殊地形降速统一由 flat_ground 感知障碍物类处理
@@ -100,7 +100,7 @@ path_follower_node:
     # slow≈均速2.5 / normal≈均速4.0 / fast≈均速4.5
     speed_tier: "normal"          # slow | normal | fast
     tier_slow_speed: 2.5          # slow 档：直线段最大速度
-    tier_normal_speed: 4.0       # normal 档：直线段最大速度
+    tier_normal_speed: 3.5       # normal 档：直线段最大速度 — 测试6: 4.0→3.5, 降贴线后过冲动能
     tier_fast_speed: 4.5          # fast 档：直线段最大速度
     speed_profile_max: 4.0       # fallback/历史兼容：tier 非法时退回此值
     # ── Finish / 终点逻辑（line | circle | time | none） ──

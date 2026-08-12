@@ -206,6 +206,8 @@ class PathFollowerNode(Node):
         from collections import deque as _deque
         self._e_psi_history: _deque = _deque(maxlen=int(getattr(self._lqr_cfg, "e_psi_ma_window", 5)) or 1)
         self._recovery_hold: int = 0  # countdown timer for RECOVERY exit delay
+        self._recovery_active: bool = False  # P0.5 渐进恢复门激活标志
+        self._recovery_total: int = 0  # P0.5 恢复模式总持续帧数(超时强制退出)
 
         # curvature-aware pre-deceleration
         self.declare_parameter("max_lateral_accel", 1.2)
@@ -868,6 +870,45 @@ class PathFollowerNode(Node):
         e_y_val = abs(float(command.get("e_y", 0.0)))
         if abs(e_psi) > math.radians(8.0) and e_y_val > 0.5 and not braking_to_stop:
             v_ref = min(v_ref, self._idle_speed)
+
+        # P0.5: 渐进恢复门 — 仅在"恢复模式"下触发.
+        # 恢复模式: |e_y| 曾超过 0.5m(触发过 P0 航向门) → 进入恢复模式;
+        #           贴线保持期满(30帧/1.5s) → 退出恢复模式.
+        # 弯道正常跟踪: e_y 一直 <0.5(从未触发 P0) → 不进入恢复模式 → 不受限速.
+        # 退出阈值 0.3(非0.1): 弯道里 e_y 稳定在0.3-0.5 也能退出, 防卡死.
+        RECOVERY_HOLD_FRAMES = 20  # 1.0s @ 20Hz (缩短, 弯道里更快退出)
+        RECOVERY_ENTER_THRESH = 0.6  # 进入恢复模式的 e_y 阈值(放宽0.5→0.6, 弯道正常跟踪0.4-0.5不误触发)
+        RECOVERY_EXIT_THRESH = 0.4   # 退出恢复模式的 e_y 阈值(0.3→0.4, 弯道里center 0.2-0.3能退出)
+        RECOVERY_MAX_FRAMES = 150    # 恢复模式最大持续 7.5s, 超时强制退出防卡死
+        if not braking_to_stop:
+            # 进入/退出恢复模式
+            if e_y_val > RECOVERY_ENTER_THRESH:
+                self._recovery_active = True
+                self._recovery_hold = 0
+                self._recovery_total = 0
+            elif self._recovery_active:
+                self._recovery_total += 1
+                # 超时强制退出
+                if self._recovery_total > RECOVERY_MAX_FRAMES:
+                    self._recovery_active = False
+                elif e_y_val < RECOVERY_EXIT_THRESH:
+                    self._recovery_hold += 1
+                    if self._recovery_hold >= RECOVERY_HOLD_FRAMES:
+                        self._recovery_active = False  # 保持期满, 退出
+                else:
+                    self._recovery_hold = 0  # 未达退出阈值, 重置计时
+            # 渐进限速: 仅恢复模式生效
+            if self._recovery_active:
+                recovery_ceiling = self._idle_speed + (
+                    v_ref - self._idle_speed
+                ) * max(0.0, (0.6 - e_y_val) / 0.5)
+                # 保持期内额外压低
+                if self._recovery_hold < RECOVERY_HOLD_FRAMES:
+                    progress = self._recovery_hold / RECOVERY_HOLD_FRAMES
+                    recovery_ceiling = self._idle_speed + (
+                        recovery_ceiling - self._idle_speed
+                    ) * progress
+                v_ref = min(v_ref, recovery_ceiling)
 
         # P1: 反馈饱和时主动降速 — 转向已贴物理极限, 继续高速只会累积偏差脱轨.
         # 原实现 v_ref *= 0.6 为瞬时降速, 脱离饱和当帧立刻回到 speed_profile 原值,
