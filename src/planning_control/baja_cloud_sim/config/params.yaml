@@ -71,7 +71,7 @@ path_follower_node:
                                       # 配合 EPS 死区1°+输出死区0.5° 共3°小角度不响应区间, 吃掉中等抖动
     s_proj_lookahead: 1.5
     max_lateral_accel: 0.8            # 弯道侧向加速度上限(m/s²) — 测试11: 0.9→0.8, 弯道速度略降防外抛触发恢复模式
-    curvature_lookahead_m: 8.0            # 测试12: 6→8, 曲率前瞻更远, 进弯前更早识别弯道降速
+    curvature_lookahead_m: 8.0            # 测试13: 试12效果不稳定(部分弯前反而失效, 因planned_path起点限制前视范围), 回退到8
     pre_decel_lookahead_m: 20.0           # 测试12: 18→20(配合horizon=40), 提前减速前瞻, 不超过horizon的50%
     pre_decel_max: 1.5                    # 测试12: 1.0→1.5, 提前减速段减力度加大, 让速度真降下来而非温和过渡
     v_ref_lowpass_alpha: 0.5              # v_ref 帧间低通系数: 0.75→0.5, 抑制 planned_path 10Hz刷新致 s投影起点抖动把 v_ref 在弯道抬高的锯齿多峰; 0.4=纯历史 1=无低通
@@ -100,7 +100,7 @@ path_follower_node:
     # slow≈均速2.5 / normal≈均速4.0 / fast≈均速4.5
     speed_tier: "normal"          # slow | normal | fast
     tier_slow_speed: 2.5          # slow 档：直线段最大速度
-    tier_normal_speed: 3.5       # normal 档：直线段最大速度 — 测试6: 4.0→3.5, 降贴线后过冲动能
+    tier_normal_speed: 4.0     # normal 档：直线段最大速度 — 测试6: 4.0→3.5, 降贴线后过冲动能
     tier_fast_speed: 4.5          # fast 档：直线段最大速度
     speed_profile_max: 4.0       # fallback/历史兼容：tier 非法时退回此值
     # ── Finish / 终点逻辑（line | circle | time | none） ──
